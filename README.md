@@ -75,6 +75,47 @@ Variáveis disponíveis nos comandos personalizados:
 - `{username}` - Nome do usuário
 - `{server}` - Nome do servidor
 
+## 📤 Enviar para o GitHub
+
+### 1. Criar repositório no GitHub
+
+1. Acesse [GitHub](https://github.com) e crie um novo repositório chamado `bot-papelzinho`
+2. **Não** inicialize com README, .gitignore ou licença (já temos esses arquivos)
+
+### 2. Fazer push do código
+
+```bash
+git init
+git add .
+git commit -m "Initial commit - Bot Papelzinho"
+git branch -M main
+git remote add origin https://github.com/seu-usuario/bot-papelzinho.git
+git push -u origin main
+```
+
+### 3. Autenticação no GitHub
+
+Se solicitado, você precisará autenticar. Opções:
+
+**Opção A - Token de Acesso Pessoal (Recomendado):**
+1. Acesse [GitHub Settings > Developer settings > Personal access tokens > Tokens (classic)](https://github.com/settings/tokens)
+2. Clique em "Generate new token (classic)"
+3. Dê um nome e selecione o escopo `repo`
+4. Copie o token gerado
+5. Use o token como senha quando o Git solicitar credenciais
+
+**Opção B - GitHub CLI:**
+```bash
+# Instalar GitHub CLI (se não tiver)
+sudo apt install gh  # ou use outro método de instalação
+
+# Autenticar
+gh auth login
+
+# Fazer push
+git push -u origin main
+```
+
 ## ☁️ Deploy na Square Cloud
 
 ### 1. Criar conta na Square Cloud
@@ -95,11 +136,21 @@ Na Square Cloud, adicione as variáveis de ambiente:
 - `DISCORD_TOKEN` - Token do bot
 - `PREFIX` - Prefixo dos comandos (opcional, padrão: !)
 
-### 4. Configurar arquivo de start
+### 4. Configurar execução do ambiente
 
-A Square Cloud deve detectar automaticamente o `main.py`. Se necessário, configure:
-- **Start Command**: `python3 main.py`
-- **Main File**: `main.py`
+**Recomendado: Modo Automático** ✅
+
+1. Escolha o modo **Automático**
+2. Arquivo principal: `main.py`
+3. A Square Cloud detectará automaticamente e executará o bot
+
+**Alternativa: Modo Manual**
+
+Se preferir o modo Manual, configure:
+- **Ambiente**: Python 3.11 (ou 3.10)
+- **Comando de inicialização**: `python3 main.py`
+
+**Nota:** O arquivo `squarecloud.json` já está configurado no repositório e será usado automaticamente pela Square Cloud.
 
 ## 📁 Estrutura do Projeto
 
