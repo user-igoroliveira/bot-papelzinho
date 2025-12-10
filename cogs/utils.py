@@ -78,15 +78,6 @@ Nosso objetivo é que o Papelzinho seja um assistente proativo e amigável, ajud
             timestamp=datetime.utcnow()
         )
         
-        # Adicionar estatísticas em um campo separado (opcional)
-        embed.add_field(
-            name="📊 Estatísticas",
-            value=f"Servidores: {len(self.bot.guilds)}\n"
-                  f"Usuários: {len(self.bot.users)}\n"
-                  f"Comandos: {len(self.bot.commands)}",
-            inline=True
-        )
-        
         embed.set_footer(text=f"Solicitado por {ctx.author.name}", icon_url=ctx.author.avatar.url if ctx.author.avatar else None)
         
         await self.send_private_response(ctx, embed=embed)
