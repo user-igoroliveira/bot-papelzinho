@@ -85,6 +85,7 @@ async def load_extensions():
         'cogs.custom_commands',
         'cogs.utils',
         'cogs.caixas',
+        'cogs.site',
     ]
     
     for extension in extensions:
