@@ -246,9 +246,9 @@ class Site(commands.Cog):
             return None
     
     
-    @commands.hybrid_command(name='site', aliases=['buscar', 'pesquisar'])
+    @commands.hybrid_command(name='buscar', aliases=['site', 'pesquisar'])
     @app_commands.describe(termo='Termo de busca (ex: hmp, convite, casamento)')
-    async def site(self, ctx, termo: str = None):
+    async def buscar(self, ctx, termo: str = None):
         """Buscar produtos no site PapeleEstilo"""
         
         if not termo:
@@ -256,7 +256,7 @@ class Site(commands.Cog):
                 ctx,
                 content="🔍 **Busca no site PapeleEstilo**\n\n"
                        "Por favor, informe o termo de busca.\n"
-                       "Exemplo: `/site hmp` ou `!site convite`"
+                       "Exemplo: `/buscar hmp` ou `!buscar convite`"
             )
             return
         

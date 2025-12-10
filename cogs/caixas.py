@@ -147,7 +147,7 @@ class Caixas(commands.Cog):
             except discord.Forbidden:
                 await ctx.send("❌ Não foi possível enviar mensagem privada. Verifique se você permite DMs de membros do servidor.")
     
-    @commands.hybrid_command(name='caixas', aliases=['caixa', 'buscar'])
+    @commands.hybrid_command(name='caixas', aliases=['caixa'])
     @app_commands.describe(medidas='Medidas no formato LarguraxComprimentoxAltura (ex: 150x150x100)')
     async def caixas(self, ctx, medidas: str = None):
         """Buscar caixas por medidas aproximadas"""
