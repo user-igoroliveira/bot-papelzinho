@@ -28,27 +28,36 @@ class Utils(commands.Cog):
     @commands.hybrid_command(name='info', aliases=['botinfo', 'sobre'])
     async def info(self, ctx):
         """Informações sobre o bot"""
+        user_name = ctx.author.display_name or ctx.author.name
+        
+        description = f"""Olá, **{user_name}**,
+
+Com um sorriso contagiante e seu boné estiloso, o Papelzinho não é apenas fofo, ele é uma verdadeira fonte de recursos. Desenvolvido para ser seu melhor amigo no Discord, ele está aqui para:
+
+• **Fornecer Informações Necessárias**: Precisa de um lembrete rápido sobre um procedimento, a localização de um arquivo importante ou o horário de uma reunião? Pergunte ao Papelzinho!
+
+• **Compartilhar Truques e Atalhos**: Descubra maneiras inteligentes de otimizar suas tarefas e aproveitar ao máximo as ferramentas que usamos. O Papelzinho tem sempre um truque na manga!
+
+• **Trazer Novas Dicas**: Mantenha-se atualizado com as últimas novidades, melhores práticas e sacadas que podem fazer a diferença no seu dia a dia profissional.
+
+Nosso objetivo é que o Papelzinho seja um assistente proativo e amigável, ajudando a simplificar processos, inovar em nossas rotinas e fortalecer ainda mais nossa colaboração. Ele está sempre pronto para aprender e crescer com a gente!
+
+**Como interagir com o Papelzinho?** Basta marcá-lo em uma mensagem ou usar comandos específicos que iremos divulgar em breve! Ele estará em canais específicos, pronto para ajudar quando você precisar."""
+        
         embed = discord.Embed(
-            title="🤖 Papelzinho - Informações",
-            description="Bot Discord criado com discord.py",
+            title="🤖 Papelzinho - Seu Assistente no Discord",
+            description=description,
             color=discord.Color.blue(),
             timestamp=datetime.utcnow()
         )
         
+        # Adicionar estatísticas em um campo separado (opcional)
         embed.add_field(
             name="📊 Estatísticas",
             value=f"Servidores: {len(self.bot.guilds)}\n"
                   f"Usuários: {len(self.bot.users)}\n"
                   f"Comandos: {len(self.bot.commands)}",
-            inline=False
-        )
-        
-        embed.add_field(
-            name="💻 Tecnologias",
-            value=f"Python: {platform.python_version()}\n"
-                  f"discord.py: {discord.__version__}\n"
-                  f"Plataforma: {platform.system()}",
-            inline=False
+            inline=True
         )
         
         embed.set_footer(text=f"Solicitado por {ctx.author.name}", icon_url=ctx.author.avatar.url if ctx.author.avatar else None)
