@@ -13,6 +13,33 @@ class CustomCommands(commands.Cog):
         self.db_path = 'data/bot.db'
         self.init_database()
     
+    async def send_private_response(self, ctx, content=None, embed=None):
+        """Enviar resposta privada (ephemeral para slash, DM para prefixo)"""
+        if ctx.interaction:
+            # Slash command - usar ephemeral
+            try:
+                if embed:
+                    await ctx.interaction.response.send_message(embed=embed, ephemeral=True)
+                else:
+                    await ctx.interaction.response.send_message(content=content, ephemeral=True)
+            except discord.InteractionResponded:
+                # Se já foi respondido, usar followup
+                if embed:
+                    await ctx.interaction.followup.send(embed=embed, ephemeral=True)
+                else:
+                    await ctx.interaction.followup.send(content=content, ephemeral=True)
+        else:
+            # Prefix command - enviar via DM
+            try:
+                if embed:
+                    await ctx.author.send(embed=embed)
+                else:
+                    await ctx.author.send(content=content)
+                # Confirmar no canal que a resposta foi enviada por DM
+                await ctx.send("✅ Resposta enviada por mensagem privada!", delete_after=5)
+            except discord.Forbidden:
+                await ctx.send("❌ Não foi possível enviar mensagem privada. Verifique se você permite DMs de membros do servidor.")
+    
     def init_database(self):
         """Inicializar banco de dados"""
         os.makedirs('data', exist_ok=True)
@@ -49,16 +76,16 @@ class CustomCommands(commands.Cog):
     async def add_command(self, ctx, nome: str, *, resposta: str):
         """Criar um comando personalizado (prefixo ou slash)"""
         if not ctx.guild:
-            await ctx.send("❌ Este comando só funciona em servidores!")
+            await self.send_private_response(ctx, content="❌ Este comando só funciona em servidores!")
             return
         
         # Validar nome do comando
         if len(nome) < 2 or len(nome) > 20:
-            await ctx.send("❌ O nome do comando deve ter entre 2 e 20 caracteres!")
+            await self.send_private_response(ctx, content="❌ O nome do comando deve ter entre 2 e 20 caracteres!")
             return
         
         if not nome.isalnum():
-            await ctx.send("❌ O nome do comando deve conter apenas letras e números!")
+            await self.send_private_response(ctx, content="❌ O nome do comando deve conter apenas letras e números!")
             return
         
         # Verificar se já existe
@@ -72,7 +99,7 @@ class CustomCommands(commands.Cog):
         
         if cursor.fetchone():
             conn.close()
-            await ctx.send(f"❌ O comando `{nome}` já existe!")
+            await self.send_private_response(ctx, content=f"❌ O comando `{nome}` já existe!")
             return
         
         # Criar comando
@@ -86,14 +113,14 @@ class CustomCommands(commands.Cog):
         conn.commit()
         conn.close()
         
-        await ctx.send(f"✅ Comando `{nome}` criado com sucesso!")
+        await self.send_private_response(ctx, content=f"✅ Comando `{nome}` criado com sucesso!")
     
     @commands.hybrid_command(name='delcommand', aliases=['delcmd', 'deletarcomando'])
     @app_commands.describe(nome='Nome do comando a deletar')
     async def del_command(self, ctx, nome: str):
         """Deletar um comando personalizado"""
         if not ctx.guild:
-            await ctx.send("❌ Este comando só funciona em servidores!")
+            await self.send_private_response(ctx, content="❌ Este comando só funciona em servidores!")
             return
         
         conn = self.get_connection()
@@ -108,14 +135,14 @@ class CustomCommands(commands.Cog):
         
         if not result:
             conn.close()
-            await ctx.send(f"❌ O comando `{nome}` não existe!")
+            await self.send_private_response(ctx, content=f"❌ O comando `{nome}` não existe!")
             return
         
         # Verificar permissões (criador ou admin)
         created_by = result[0]
         if ctx.author.id != created_by and not ctx.author.guild_permissions.administrator:
             conn.close()
-            await ctx.send("❌ Você não tem permissão para deletar este comando!")
+            await self.send_private_response(ctx, content="❌ Você não tem permissão para deletar este comando!")
             return
         
         cursor.execute(
@@ -126,13 +153,13 @@ class CustomCommands(commands.Cog):
         conn.commit()
         conn.close()
         
-        await ctx.send(f"✅ Comando `{nome}` deletado com sucesso!")
+        await self.send_private_response(ctx, content=f"✅ Comando `{nome}` deletado com sucesso!")
     
     @commands.hybrid_command(name='listcommands', aliases=['listcmd', 'comandos'])
     async def list_commands(self, ctx):
         """Listar todos os comandos personalizados do servidor"""
         if not ctx.guild:
-            await ctx.send("❌ Este comando só funciona em servidores!")
+            await self.send_private_response(ctx, content="❌ Este comando só funciona em servidores!")
             return
         
         conn = self.get_connection()
@@ -147,7 +174,7 @@ class CustomCommands(commands.Cog):
         conn.close()
         
         if not commands_list:
-            await ctx.send("📝 Não há comandos personalizados neste servidor.")
+            await self.send_private_response(ctx, content="📝 Não há comandos personalizados neste servidor.")
             return
         
         embed = discord.Embed(
@@ -159,7 +186,7 @@ class CustomCommands(commands.Cog):
         embed.description = commands_text
         embed.set_footer(text=f"Total: {len(commands_list)} comando(s)")
         
-        await ctx.send(embed=embed)
+        await self.send_private_response(ctx, embed=embed)
     
     @commands.Cog.listener()
     async def on_message(self, message):

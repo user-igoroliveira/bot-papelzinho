@@ -11,6 +11,33 @@ class Utils(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
     
+    async def send_private_response(self, ctx, content=None, embed=None):
+        """Enviar resposta privada (ephemeral para slash, DM para prefixo)"""
+        if ctx.interaction:
+            # Slash command - usar ephemeral
+            try:
+                if embed:
+                    await ctx.interaction.response.send_message(embed=embed, ephemeral=True)
+                else:
+                    await ctx.interaction.response.send_message(content=content, ephemeral=True)
+            except discord.InteractionResponded:
+                # Se já foi respondido, usar followup
+                if embed:
+                    await ctx.interaction.followup.send(embed=embed, ephemeral=True)
+                else:
+                    await ctx.interaction.followup.send(content=content, ephemeral=True)
+        else:
+            # Prefix command - enviar via DM
+            try:
+                if embed:
+                    await ctx.author.send(embed=embed)
+                else:
+                    await ctx.author.send(content=content)
+                # Confirmar no canal que a resposta foi enviada por DM
+                await ctx.send("✅ Resposta enviada por mensagem privada!", delete_after=5)
+            except discord.Forbidden:
+                await ctx.send("❌ Não foi possível enviar mensagem privada. Verifique se você permite DMs de membros do servidor.")
+    
     @commands.hybrid_command(name='ping', aliases=['latencia'])
     async def ping(self, ctx):
         """Verificar a latência do bot"""
@@ -23,7 +50,7 @@ class Utils(commands.Cog):
         embed.add_field(name="Latência", value=f"{latency}ms", inline=True)
         embed.add_field(name="Status", value="✅ Online", inline=True)
         
-        await ctx.send(embed=embed)
+        await self.send_private_response(ctx, embed=embed)
     
     @commands.hybrid_command(name='info', aliases=['botinfo', 'sobre'])
     async def info(self, ctx):
@@ -62,13 +89,13 @@ Nosso objetivo é que o Papelzinho seja um assistente proativo e amigável, ajud
         
         embed.set_footer(text=f"Solicitado por {ctx.author.name}", icon_url=ctx.author.avatar.url if ctx.author.avatar else None)
         
-        await ctx.send(embed=embed)
+        await self.send_private_response(ctx, embed=embed)
     
     @commands.hybrid_command(name='serverinfo', aliases=['servidor'])
     async def serverinfo(self, ctx):
         """Informações sobre o servidor"""
         if not ctx.guild:
-            await ctx.send("❌ Este comando só funciona em servidores!")
+            await self.send_private_response(ctx, content="❌ Este comando só funciona em servidores!")
             return
         
         guild = ctx.guild
@@ -120,14 +147,14 @@ Nosso objetivo é que o Papelzinho seja um assistente proativo e amigável, ajud
         
         embed.set_footer(text=f"ID: {guild.id}")
         
-        await ctx.send(embed=embed)
+        await self.send_private_response(ctx, embed=embed)
     
     @commands.hybrid_command(name='userinfo', aliases=['usuario', 'user'])
     @app_commands.describe(usuario='Usuário para ver informações (opcional)')
     async def userinfo(self, ctx, usuario: discord.Member = None):
         """Informações sobre um usuário"""
         if not ctx.guild:
-            await ctx.send("❌ Este comando só funciona em servidores!")
+            await self.send_private_response(ctx, content="❌ Este comando só funciona em servidores!")
             return
         
         user = usuario or ctx.author
@@ -173,7 +200,7 @@ Nosso objetivo é que o Papelzinho seja um assistente proativo e amigável, ajud
         
         embed.set_footer(text=f"Solicitado por {ctx.author.name}")
         
-        await ctx.send(embed=embed)
+        await self.send_private_response(ctx, embed=embed)
 
 
 async def setup(bot):
