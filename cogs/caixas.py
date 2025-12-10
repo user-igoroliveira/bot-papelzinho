@@ -208,13 +208,11 @@ class Caixas(commands.Cog):
         
         for i, resultado in enumerate(melhores_caixas, 1):
             caixa = resultado['caixa']
-            distance = resultado['distance']
             
             field_value = (
                 f"**Medida Interna:** {caixa['medida_interna']}\n"
                 f"**Medida Externa:** {caixa['medida_externa']}\n"
-                f"**Aproveitamento:** {caixa['aproveitamento']}\n"
-                f"**Distância:** {distance:.1f}mm"
+                f"**Aproveitamento:** {caixa['aproveitamento']}"
             )
             
             embed.add_field(
