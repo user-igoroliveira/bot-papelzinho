@@ -41,7 +41,7 @@ class Site(commands.Cog):
                 await ctx.send("❌ Não foi possível enviar mensagem privada. Verifique se você permite DMs de membros do servidor.")
     
     async def buscar_produtos(self, termo):
-        """Buscar produtos no site"""
+        """Buscar produtos no site e extrair links"""
         url = f"{self.base_url}/?s={termo}"
         
         headers = {
@@ -50,17 +50,16 @@ class Site(commands.Cog):
         
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.get(url, headers=headers, timeout=10) as response:
+                async with session.get(url, headers=headers, timeout=15) as response:
                     if response.status != 200:
                         return None
                     
                     html = await response.text()
                     soup = BeautifulSoup(html, 'html.parser')
                     
-                    produtos = []
+                    produtos_links = []
                     
                     # Buscar por elementos que contenham "Quantidade mínima"
-                    # Isso é mais confiável para este site específico
                     qtd_elements = soup.find_all(string=re.compile(r'Quantidade mínima', re.I))
                     
                     for qtd_text in qtd_elements[:10]:  # Limitar para performance
@@ -75,36 +74,80 @@ class Site(commands.Cog):
                                 break
                         
                         if parent:
-                            produto_data = self.extrair_dados_produto(parent, soup)
-                            if produto_data and produto_data.get('nome'):
-                                # Evitar duplicatas
-                                if not any(p.get('nome') == produto_data.get('nome') for p in produtos):
-                                    produtos.append(produto_data)
-                    
-                    # Se não encontrou pelo método acima, tentar buscar por artigos ou divs
-                    if not produtos:
-                        product_selectors = [
-                            'article',
-                            '.product',
-                            '.produto',
-                            '.item',
-                            'div[class*="product"]',
-                            'div[class*="produto"]',
-                            'div[class*="entry"]'
-                        ]
-                        
-                        for selector in product_selectors:
-                            items = soup.select(selector)
-                            if items:
-                                for item in items[:10]:
-                                    produto_data = self.extrair_dados_produto(item, soup)
-                                    if produto_data and produto_data.get('nome'):
-                                        if not any(p.get('nome') == produto_data.get('nome') for p in produtos):
-                                            produtos.append(produto_data)
-                                if produtos:
+                            # Extrair nome e link do produto
+                            nome = None
+                            link = None
+                            
+                            # Buscar por headings
+                            for tag in ['h1', 'h2', 'h3', 'h4', 'h5']:
+                                heading = parent.find(tag)
+                                if heading:
+                                    nome = heading.get_text(strip=True)
+                                    # Tentar pegar link do heading
+                                    link_elem = heading.find('a')
+                                    if link_elem and link_elem.get('href'):
+                                        link = link_elem.get('href')
                                     break
+                            
+                            # Se não encontrou, buscar por links
+                            if not link:
+                                link_elem = parent.find('a', href=re.compile(r'/produto/'))
+                                if link_elem:
+                                    link = link_elem.get('href')
+                                    if not nome:
+                                        nome = link_elem.get_text(strip=True)
+                            
+                            # Se ainda não tem nome, tentar extrair do texto
+                            if not nome:
+                                texto = parent.get_text() if hasattr(parent, 'get_text') else str(parent)
+                                linhas = texto.split('\n')
+                                for linha in linhas:
+                                    linha = linha.strip()
+                                    if (linha and 3 < len(linha) < 100 and 
+                                        'Quantidade mínima' not in linha and 
+                                        'Prazo de confecção' not in linha and
+                                        'unidades' not in linha.lower() and
+                                        'dias' not in linha.lower()):
+                                        nome = linha
+                                        break
+                            
+                            if nome and link:
+                                # Normalizar link
+                                if not link.startswith('http'):
+                                    if link.startswith('/'):
+                                        link = f"{self.base_url}{link}"
+                                    else:
+                                        link = f"{self.base_url}/{link}"
+                                
+                                # Evitar duplicatas
+                                if not any(p.get('link') == link for p in produtos_links):
+                                    produtos_links.append({
+                                        'nome': nome,
+                                        'link': link
+                                    })
                     
-                    return produtos[:3]  # Retornar apenas os 3 primeiros
+                    # Se não encontrou pelo método acima, tentar buscar por links diretos
+                    if not produtos_links:
+                        links = soup.find_all('a', href=re.compile(r'/produto/'))
+                        for link_elem in links[:10]:
+                            link = link_elem.get('href')
+                            nome = link_elem.get_text(strip=True)
+                            
+                            if link and nome and len(nome) > 3:
+                                if not link.startswith('http'):
+                                    if link.startswith('/'):
+                                        link = f"{self.base_url}{link}"
+                                    else:
+                                        link = f"{self.base_url}/{link}"
+                                
+                                if not any(p.get('link') == link for p in produtos_links):
+                                    produtos_links.append({
+                                        'nome': nome,
+                                        'link': link
+                                    })
+                    
+                    # Retornar apenas os 3 primeiros
+                    return produtos_links[:3]
                     
         except asyncio.TimeoutError:
             return None
@@ -112,87 +155,96 @@ class Site(commands.Cog):
             print(f"Erro ao buscar produtos: {e}")
             return None
     
-    def extrair_dados_produto(self, elemento, soup):
-        """Extrair dados de um produto do HTML"""
-        produto = {}
+    async def buscar_detalhes_produto(self, link_produto):
+        """Buscar detalhes completos de um produto acessando sua página"""
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
         
-        if not elemento:
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(link_produto, headers=headers, timeout=15) as response:
+                    if response.status != 200:
+                        return None
+                    
+                    html = await response.text()
+                    soup = BeautifulSoup(html, 'html.parser')
+                    
+                    produto = {}
+                    
+                    # Extrair nome do produto (h1 geralmente contém o nome)
+                    h1 = soup.find('h1')
+                    if h1:
+                        produto['nome'] = h1.get_text(strip=True)
+                    
+                    # Extrair quantidade mínima
+                    texto_completo = soup.get_text()
+                    qtd_match = re.search(r'Quantidade mínima[:\s]*(\d+)', texto_completo, re.I)
+                    if qtd_match:
+                        produto['quantidade_minima'] = f"{qtd_match.group(1)} unidades"
+                    else:
+                        produto['quantidade_minima'] = "Não informado"
+                    
+                    # Extrair prazo de confecção
+                    prazo_match = re.search(r'Prazo de confecção[:\s]*([^\.]+)', texto_completo, re.I)
+                    if prazo_match:
+                        produto['prazo'] = prazo_match.group(1).strip()
+                    else:
+                        produto['prazo'] = "Não informado"
+                    
+                    # Extrair preços (atual e original)
+                    # Padrão: ~~R$ 28,60~~ (original) e R$ 27,15 (atual)
+                    preco_original = None
+                    preco_atual = None
+                    
+                    # Buscar por padrão de preço riscado (original)
+                    preco_riscado = soup.find(string=re.compile(r'R\$\s*[\d.,]+'))
+                    if preco_riscado:
+                        parent = preco_riscado.find_parent()
+                        if parent and parent.name in ['del', 's', 'strike']:
+                            match = re.search(r'R\$\s*([\d.,]+)', preco_riscado, re.I)
+                            if match:
+                                preco_original = f"R$ {match.group(1)}"
+                    
+                    # Buscar preço atual (geralmente após o preço riscado)
+                    # Procurar por "O preço atual é: R$ X"
+                    preco_atual_match = re.search(r'O preço atual é[:\s]*R\$\s*([\d.,]+)', texto_completo, re.I)
+                    if preco_atual_match:
+                        preco_atual = f"R$ {preco_atual_match.group(1)}"
+                    else:
+                        # Tentar encontrar preço que não está riscado
+                        preco_elem = soup.find('span', class_=re.compile(r'price|preco', re.I))
+                        if preco_elem:
+                            preco_text = preco_elem.get_text()
+                            match = re.search(r'R\$\s*([\d.,]+)', preco_text, re.I)
+                            if match:
+                                preco_atual = f"R$ {match.group(1)}"
+                        else:
+                            # Última tentativa: buscar qualquer R$ que não esteja riscado
+                            precos = re.findall(r'R\$\s*([\d.,]+)', texto_completo, re.I)
+                            if precos:
+                                # Pegar o último (geralmente é o atual)
+                                preco_atual = f"R$ {precos[-1]}"
+                    
+                    # Montar string de valor
+                    if preco_atual:
+                        if preco_original:
+                            produto['valor'] = f"{preco_atual} (era {preco_original})"
+                        else:
+                            produto['valor'] = preco_atual
+                    else:
+                        produto['valor'] = "Consulte o site"
+                    
+                    produto['link'] = link_produto
+                    
+                    return produto
+                    
+        except asyncio.TimeoutError:
             return None
-        
-        # Extrair nome do produto
-        # Tentar diferentes seletores
-        nome = None
-        
-        # Primeiro, tentar encontrar título/heading antes de "Quantidade mínima"
-        texto_completo = elemento.get_text() if hasattr(elemento, 'get_text') else str(elemento)
-        
-        # Buscar por headings (h1, h2, h3, h4) no elemento
-        for tag in ['h1', 'h2', 'h3', 'h4', 'h5']:
-            heading = elemento.find(tag)
-            if heading:
-                nome = heading.get_text(strip=True)
-                if nome and len(nome) > 3 and len(nome) < 100:
-                    break
-        
-        # Se não encontrou, buscar por links ou títulos
-        if not nome:
-            link = elemento.find('a')
-            if link:
-                nome = link.get_text(strip=True)
-                if not nome or len(nome) < 3:
-                    # Tentar pegar do atributo title ou alt
-                    nome = link.get('title') or link.get('alt') or ''
-        
-        # Se ainda não encontrou, pegar primeira linha significativa antes de "Quantidade mínima"
-        if not nome or len(nome) < 3:
-            linhas = texto_completo.split('\n')
-            for linha in linhas:
-                linha = linha.strip()
-                # Ignorar linhas muito curtas ou muito longas, e que contenham palavras-chave
-                if (linha and 3 < len(linha) < 100 and 
-                    'Quantidade mínima' not in linha and 
-                    'Prazo de confecção' not in linha and
-                    'unidades' not in linha.lower() and
-                    'dias' not in linha.lower()):
-                    nome = linha
-                    break
-        
-        produto['nome'] = nome if nome else "Produto sem nome"
-        
-        # Extrair quantidade mínima
-        texto_completo = elemento.get_text() if hasattr(elemento, 'get_text') else str(elemento)
-        qtd_match = re.search(r'Quantidade mínima[:\s]*(\d+)', texto_completo, re.I)
-        if qtd_match:
-            produto['quantidade_minima'] = f"{qtd_match.group(1)} unidades"
-        else:
-            produto['quantidade_minima'] = "Não informado"
-        
-        # Extrair prazo de confecção
-        prazo_match = re.search(r'Prazo de confecção[:\s]*([^\.]+)', texto_completo, re.I)
-        if prazo_match:
-            produto['prazo'] = prazo_match.group(1).strip()
-        else:
-            produto['prazo'] = "Não informado"
-        
-        # Extrair valor/preço
-        # Tentar diferentes padrões de preço
-        preco_patterns = [
-            r'R\$\s*([\d.,]+)',
-            r'valor[:\s]*R\$\s*([\d.,]+)',
-            r'preço[:\s]*R\$\s*([\d.,]+)',
-            r'(\d+[.,]\d{2})\s*reais',
-        ]
-        
-        valor = None
-        for pattern in preco_patterns:
-            match = re.search(pattern, texto_completo, re.I)
-            if match:
-                valor = f"R$ {match.group(1)}"
-                break
-        
-        produto['valor'] = valor if valor else "Consulte o site"
-        
-        return produto if produto.get('nome') else None
+        except Exception as e:
+            print(f"Erro ao buscar detalhes do produto: {e}")
+            return None
+    
     
     @commands.hybrid_command(name='site', aliases=['buscar', 'pesquisar'])
     @app_commands.describe(termo='Termo de busca (ex: hmp, convite, casamento)')
@@ -212,10 +264,10 @@ class Site(commands.Cog):
         if ctx.interaction:
             await ctx.interaction.response.defer(ephemeral=True)
         
-        # Buscar produtos
-        produtos = await self.buscar_produtos(termo)
+        # Buscar produtos (retorna links)
+        produtos_links = await self.buscar_produtos(termo)
         
-        if not produtos:
+        if not produtos_links:
             await self.send_private_response(
                 ctx,
                 content=f"❌ Nenhum produto encontrado para o termo: **{termo}**\n\n"
@@ -223,20 +275,42 @@ class Site(commands.Cog):
             )
             return
         
+        # Buscar detalhes completos de cada produto (acessar páginas individuais)
+        produtos_completos = []
+        for produto_link in produtos_links:
+            detalhes = await self.buscar_detalhes_produto(produto_link['link'])
+            if detalhes:
+                # Garantir que o nome está presente
+                if not detalhes.get('nome'):
+                    detalhes['nome'] = produto_link.get('nome', 'Produto sem nome')
+                produtos_completos.append(detalhes)
+        
+        if not produtos_completos:
+            await self.send_private_response(
+                ctx,
+                content=f"❌ Não foi possível obter detalhes dos produtos para o termo: **{termo}**\n\n"
+                       "Tente novamente mais tarde."
+            )
+            return
+        
         # Criar embed com os resultados
         embed = discord.Embed(
             title=f"🔍 Resultados da busca: {termo}",
-            description=f"Encontrados **{len(produtos)}** produto(s) no site PapeleEstilo:",
+            description=f"Encontrados **{len(produtos_completos)}** produto(s) no site PapeleEstilo:",
             color=discord.Color.blue(),
             url=f"{self.base_url}/?s={termo}"
         )
         
-        for i, produto in enumerate(produtos, 1):
+        for i, produto in enumerate(produtos_completos, 1):
             field_value = (
                 f"**Quantidade mínima:** {produto.get('quantidade_minima', 'Não informado')}\n"
                 f"**Prazo de confecção:** {produto.get('prazo', 'Não informado')}\n"
                 f"**Valor:** {produto.get('valor', 'Consulte o site')}"
             )
+            
+            # Adicionar link se disponível
+            if produto.get('link'):
+                field_value += f"\n[Ver produto]({produto['link']})"
             
             embed.add_field(
                 name=f"{i}. {produto.get('nome', 'Produto sem nome')}",
