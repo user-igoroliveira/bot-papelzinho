@@ -186,44 +186,71 @@ class Rastreio(commands.Cog):
                 # Tentar diferentes métodos
                 if hasattr(rastreio_client, 'rastrear'):
                     logger_rastreio.info("Usando rastreio_client.rastrear")
-                    resultado = await asyncio.wait_for(
-                        asyncio.to_thread(rastreio_client.rastrear, codigo),
-                        timeout=10.0
-                    )
+                    metodo = rastreio_client.rastrear
+                    # Verificar se é assíncrono
+                    if asyncio.iscoroutinefunction(metodo):
+                        logger_rastreio.info("Método rastrear é assíncrono, usando await")
+                        resultado = await asyncio.wait_for(metodo(codigo), timeout=10.0)
+                    else:
+                        logger_rastreio.info("Método rastrear é síncrono, usando thread")
+                        resultado = await asyncio.wait_for(
+                            asyncio.to_thread(metodo, codigo),
+                            timeout=10.0
+                        )
                 elif hasattr(rastreio_client, 'rastreamento'):
                     logger_rastreio.info("Usando rastreio_client.rastreamento")
-                    resultado = await asyncio.wait_for(
-                        asyncio.to_thread(rastreio_client.rastreamento, codigo),
-                        timeout=10.0
-                    )
+                    metodo = rastreio_client.rastreamento
+                    if asyncio.iscoroutinefunction(metodo):
+                        resultado = await asyncio.wait_for(metodo(codigo), timeout=10.0)
+                    else:
+                        resultado = await asyncio.wait_for(
+                            asyncio.to_thread(metodo, codigo),
+                            timeout=10.0
+                        )
                 elif hasattr(rastreio_client, 'buscar'):
                     logger_rastreio.info("Usando rastreio_client.buscar")
-                    resultado = await asyncio.wait_for(
-                        asyncio.to_thread(rastreio_client.buscar, codigo),
-                        timeout=10.0
-                    )
+                    metodo = rastreio_client.buscar
+                    if asyncio.iscoroutinefunction(metodo):
+                        resultado = await asyncio.wait_for(metodo(codigo), timeout=10.0)
+                    else:
+                        resultado = await asyncio.wait_for(
+                            asyncio.to_thread(metodo, codigo),
+                            timeout=10.0
+                        )
                 elif hasattr(rastreio_client, 'track'):
                     logger_rastreio.info("Usando rastreio_client.track")
-                    resultado = await asyncio.wait_for(
-                        asyncio.to_thread(rastreio_client.track, codigo),
-                        timeout=10.0
-                    )
+                    metodo = rastreio_client.track
+                    if asyncio.iscoroutinefunction(metodo):
+                        resultado = await asyncio.wait_for(metodo(codigo), timeout=10.0)
+                    else:
+                        resultado = await asyncio.wait_for(
+                            asyncio.to_thread(metodo, codigo),
+                            timeout=10.0
+                        )
                 else:
                     logger_rastreio.warning("rastreio_client não tem método conhecido, tentando rastreio_func")
                     if rastreio_func:
-                        resultado = await asyncio.wait_for(
-                            asyncio.to_thread(rastreio_func, codigo),
-                            timeout=10.0
-                        )
+                        if asyncio.iscoroutinefunction(rastreio_func):
+                            resultado = await asyncio.wait_for(rastreio_func(codigo), timeout=10.0)
+                        else:
+                            resultado = await asyncio.wait_for(
+                                asyncio.to_thread(rastreio_func, codigo),
+                                timeout=10.0
+                            )
                     else:
                         return None, "❌ Método de rastreamento não encontrado"
             elif rastreio_func:
                 # Usar função diretamente
                 logger_rastreio.info("Usando rastreio_func diretamente")
-                resultado = await asyncio.wait_for(
-                    asyncio.to_thread(rastreio_func, codigo),
-                    timeout=10.0
-                )
+                if asyncio.iscoroutinefunction(rastreio_func):
+                    logger_rastreio.info("rastreio_func é assíncrono, usando await")
+                    resultado = await asyncio.wait_for(rastreio_func(codigo), timeout=10.0)
+                else:
+                    logger_rastreio.info("rastreio_func é síncrono, usando thread")
+                    resultado = await asyncio.wait_for(
+                        asyncio.to_thread(rastreio_func, codigo),
+                        timeout=10.0
+                    )
             else:
                 return None, "❌ Biblioteca de rastreamento não configurada corretamente"
             
