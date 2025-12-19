@@ -12,27 +12,34 @@ logger_rastreio = logging.getLogger(__name__)
 RASTREIO_AVAILABLE = False
 rastreio_func = None
 
+# Prioridade: usar rastreio_correios que já está instalada e funcionando
 try:
-    from pyrastreio import correios
-    RASTREIO_AVAILABLE = True
-    rastreio_func = correios.track
-    logger_rastreio.info("✅ pyrastreio importado com sucesso")
-except ImportError:
+    import rastreio_correios
+    # Verificar como usar a biblioteca
+    if hasattr(rastreio_correios, 'rastrear'):
+        RASTREIO_AVAILABLE = True
+        rastreio_func = rastreio_correios.rastrear
+        logger_rastreio.info("✅ rastreio_correios importado (função)")
+    elif hasattr(rastreio_correios, 'RastreioCorreios'):
+        RASTREIO_AVAILABLE = True
+        rastreio_func = rastreio_correios.RastreioCorreios().rastrear
+        logger_rastreio.info("✅ rastreio_correios importado (classe)")
+    else:
+        logger_rastreio.warning("rastreio_correios instalado mas formato desconhecido")
+except Exception as e:
+    logger_rastreio.warning(f"rastreio_correios não disponível: {e}")
+    # Fallback: tentar pyrastreio (pode não funcionar corretamente)
     try:
-        import rastreio_correios
-        # Verificar como usar a biblioteca
-        if hasattr(rastreio_correios, 'rastrear'):
+        import pyrastreio
+        # pyrastreio pode ser usado diretamente como função
+        if callable(pyrastreio):
             RASTREIO_AVAILABLE = True
-            rastreio_func = rastreio_correios.rastrear
-            logger_rastreio.info("✅ rastreio_correios importado (função)")
-        elif hasattr(rastreio_correios, 'RastreioCorreios'):
-            RASTREIO_AVAILABLE = True
-            rastreio_func = rastreio_correios.RastreioCorreios().rastrear
-            logger_rastreio.info("✅ rastreio_correios importado (classe)")
+            rastreio_func = pyrastreio
+            logger_rastreio.info("✅ pyrastreio importado (função direta)")
         else:
-            logger_rastreio.warning("rastreio_correios instalado mas formato desconhecido")
-    except Exception as e:
-        logger_rastreio.warning(f"rastreio_correios não disponível: {e}")
+            logger_rastreio.warning("pyrastreio não é callable")
+    except ImportError as e2:
+        logger_rastreio.warning(f"pyrastreio não disponível: {e2}")
 
 
 class Rastreio(commands.Cog):
