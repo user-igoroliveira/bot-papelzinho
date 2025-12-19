@@ -252,11 +252,25 @@ class Rastreio(commands.Cog):
                 return None, "❌ Nenhuma informação encontrada para este código."
             
             # Log do resultado para diagnóstico
-            logger_rastreio.info(f"Resultado recebido: tipo={type(eventos)}, quantidade={len(eventos)}")
+            logger_rastreio.info(f"Resultado recebido: tipo={type(resultado)}, tipo eventos={type(eventos)}, quantidade={len(eventos)}")
             if eventos and len(eventos) > 0:
-                logger_rastreio.info(f"Primeiro evento: tipo={type(eventos[0])}, conteúdo={eventos[0]}")
+                logger_rastreio.info(f"Primeiro evento: tipo={type(eventos[0])}, conteúdo completo={eventos[0]}")
                 if isinstance(eventos[0], dict):
                     logger_rastreio.info(f"Chaves do primeiro evento: {list(eventos[0].keys())}")
+                    # Logar todos os valores para diagnóstico
+                    for key, value in eventos[0].items():
+                        logger_rastreio.info(f"  {key}: {value} (tipo: {type(value)})")
+                else:
+                    # Se for objeto, logar atributos
+                    attrs = [attr for attr in dir(eventos[0]) if not attr.startswith('_')]
+                    logger_rastreio.info(f"Atributos do primeiro evento: {attrs}")
+                    for attr in attrs[:10]:  # Primeiros 10 atributos
+                        try:
+                            value = getattr(eventos[0], attr)
+                            if not callable(value):
+                                logger_rastreio.info(f"  {attr}: {value} (tipo: {type(value)})")
+                        except:
+                            pass
             
             return eventos, None
             
@@ -322,39 +336,123 @@ class Rastreio(commands.Cog):
                 # Log do evento para diagnóstico
                 logger_rastreio.info(f"Processando evento {i}: tipo={type(evento)}, conteúdo={evento}")
                 
-                # Extrair dados do evento
+                # Extrair dados do evento - tentar todas as formas possíveis
+                data = None
+                descricao = None
+                local = None
+                uf = None
+                
                 if isinstance(evento, dict):
-                    # Tentar múltiplas chaves possíveis
-                    data = (evento.get('data') or evento.get('dataHora') or evento.get('timestamp') or 
-                           evento.get('dtHrCriado') or evento.get('data_evento') or evento.get('date') or 'N/A')
-                    descricao = (evento.get('status') or evento.get('descricao') or evento.get('evento') or 
-                                evento.get('tipo') or evento.get('mensagem') or evento.get('texto') or 'N/A')
-                    local = (evento.get('local') or evento.get('cidade') or evento.get('origem') or 
-                            evento.get('unidade', {}).get('endereco', {}).get('cidade', '') if isinstance(evento.get('unidade'), dict) else '')
-                    uf = (evento.get('uf') or evento.get('estado') or 
-                         evento.get('unidade', {}).get('endereco', {}).get('uf', '') if isinstance(evento.get('unidade'), dict) else '')
+                    # Tentar todas as chaves possíveis para data
+                    for key in ['data', 'dataHora', 'timestamp', 'dtHrCriado', 'data_evento', 'date', 
+                               'dataHoraCriado', 'criado_em', 'data_criacao', 'hora', 'time']:
+                        if key in evento and evento[key]:
+                            data = evento[key]
+                            break
+                    
+                    # Tentar todas as chaves possíveis para descrição
+                    for key in ['status', 'descricao', 'evento', 'tipo', 'mensagem', 'texto', 
+                               'observacao', 'detalhes', 'situacao', 'status_descricao']:
+                        if key in evento and evento[key]:
+                            descricao = evento[key]
+                            break
+                    
+                    # Tentar extrair local e UF
+                    # Primeiro tentar direto
+                    for key in ['local', 'cidade', 'origem', 'destino']:
+                        if key in evento and evento[key]:
+                            local = evento[key]
+                            break
+                    
+                    for key in ['uf', 'estado', 'estado_uf']:
+                        if key in evento and evento[key]:
+                            uf = evento[key]
+                            break
+                    
+                    # Tentar estrutura aninhada
+                    if not local and 'unidade' in evento:
+                        unidade = evento['unidade']
+                        if isinstance(unidade, dict):
+                            if 'endereco' in unidade:
+                                endereco = unidade['endereco']
+                                if isinstance(endereco, dict):
+                                    local = endereco.get('cidade', '') or endereco.get('local', '')
+                                    uf = endereco.get('uf', '') or endereco.get('estado', '')
+                            else:
+                                local = unidade.get('cidade', '') or unidade.get('local', '')
+                                uf = unidade.get('uf', '') or unidade.get('estado', '')
+                    
+                    # Tentar estrutura com nome
+                    if not local and 'nome' in evento:
+                        nome = evento['nome']
+                        if isinstance(nome, str) and ' - ' in nome:
+                            partes = nome.split(' - ')
+                            if len(partes) >= 2:
+                                local = partes[0].strip()
+                                uf = partes[1].strip() if len(partes) > 1 else ''
                 else:
                     # Tentar múltiplos atributos possíveis
-                    data = (getattr(evento, 'data', None) or getattr(evento, 'dataHora', None) or 
-                           getattr(evento, 'timestamp', None) or getattr(evento, 'dtHrCriado', None) or 'N/A')
-                    descricao = (getattr(evento, 'descricao', None) or getattr(evento, 'status', None) or 
-                               getattr(evento, 'evento', None) or getattr(evento, 'tipo', None) or 'N/A')
-                    local = (getattr(evento, 'local', None) or getattr(evento, 'cidade', None) or 
-                            getattr(evento, 'origem', None) or '')
-                    uf = (getattr(evento, 'uf', None) or getattr(evento, 'estado', None) or '')
+                    for attr in ['data', 'dataHora', 'timestamp', 'dtHrCriado', 'data_evento', 'date']:
+                        if hasattr(evento, attr):
+                            value = getattr(evento, attr)
+                            if value:
+                                data = value
+                                break
+                    
+                    for attr in ['descricao', 'status', 'evento', 'tipo', 'mensagem', 'texto']:
+                        if hasattr(evento, attr):
+                            value = getattr(evento, attr)
+                            if value:
+                                descricao = value
+                                break
+                    
+                    for attr in ['local', 'cidade', 'origem']:
+                        if hasattr(evento, attr):
+                            value = getattr(evento, attr)
+                            if value:
+                                local = value
+                                break
+                    
+                    for attr in ['uf', 'estado']:
+                        if hasattr(evento, attr):
+                            value = getattr(evento, attr)
+                            if value:
+                                uf = value
+                                break
+                
+                # Se ainda não encontrou, tentar converter objeto para dict
+                if not data and not isinstance(evento, dict):
+                    try:
+                        evento_dict = dict(evento.__dict__) if hasattr(evento, '__dict__') else {}
+                        if evento_dict:
+                            for key in ['data', 'dataHora', 'timestamp', 'dtHrCriado']:
+                                if key in evento_dict and evento_dict[key]:
+                                    data = evento_dict[key]
+                                    break
+                            for key in ['descricao', 'status', 'evento', 'tipo']:
+                                if key in evento_dict and evento_dict[key]:
+                                    descricao = evento_dict[key]
+                                    break
+                    except:
+                        pass
                 
                 # Log dos valores extraídos
-                logger_rastreio.info(f"Evento {i} extraído: data={data}, descricao={descricao}, local={local}, uf={uf}")
+                logger_rastreio.info(f"Evento {i} extraído: data={data} (tipo: {type(data)}), descricao={descricao} (tipo: {type(descricao)}), local={local}, uf={uf}")
                 
                 # Formatar data
-                if data and data != 'N/A':
+                if data and data != 'N/A' and data is not None:
                     if isinstance(data, str):
+                        # Se for string, tentar formatar se necessário
                         data_formatada = data
-                    else:
+                    elif hasattr(data, 'strftime'):
+                        # Se for datetime
                         try:
                             data_formatada = data.strftime("%d/%m/%Y %H:%M")
                         except:
                             data_formatada = str(data)
+                    else:
+                        # Tentar converter para string
+                        data_formatada = str(data)
                 else:
                     data_formatada = "Data não disponível"
                 
@@ -369,8 +467,21 @@ class Rastreio(commands.Cog):
                     local_completo = "Local não informado"
                 
                 # Garantir que descrição não seja vazia
-                if not descricao or descricao == 'N/A':
-                    descricao = "Informação não disponível"
+                if not descricao or descricao == 'N/A' or descricao is None:
+                    # Se não encontrou descrição, tentar usar o evento inteiro como string
+                    if isinstance(evento, dict):
+                        # Tentar criar descrição a partir de todas as chaves
+                        desc_parts = []
+                        for key, value in evento.items():
+                            if key not in ['data', 'dataHora', 'timestamp', 'local', 'cidade', 'uf', 'estado']:
+                                if value and str(value).strip():
+                                    desc_parts.append(f"{key}: {value}")
+                        if desc_parts:
+                            descricao = " | ".join(desc_parts[:3])  # Limitar a 3 partes
+                        else:
+                            descricao = "Informação não disponível"
+                    else:
+                        descricao = "Informação não disponível"
                 
                 # Limitar tamanhos
                 descricao = descricao[:200] if len(descricao) > 200 else descricao
