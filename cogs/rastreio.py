@@ -215,6 +215,13 @@ class Rastreio(commands.Cog):
             if not eventos or len(eventos) == 0:
                 return None, "❌ Nenhuma informação encontrada para este código."
             
+            # Log do resultado para diagnóstico
+            logger_rastreio.info(f"Resultado recebido: tipo={type(eventos)}, quantidade={len(eventos)}")
+            if eventos and len(eventos) > 0:
+                logger_rastreio.info(f"Primeiro evento: tipo={type(eventos[0])}, conteúdo={eventos[0]}")
+                if isinstance(eventos[0], dict):
+                    logger_rastreio.info(f"Chaves do primeiro evento: {list(eventos[0].keys())}")
+            
             return eventos, None
             
         except asyncio.TimeoutError:
@@ -276,35 +283,67 @@ class Rastreio(commands.Cog):
         eventos_formatados = []
         for i, evento in enumerate(eventos[:10], 1):
             try:
+                # Log do evento para diagnóstico
+                logger_rastreio.info(f"Processando evento {i}: tipo={type(evento)}, conteúdo={evento}")
+                
                 # Extrair dados do evento
                 if isinstance(evento, dict):
-                    data = evento.get('data', evento.get('dataHora', evento.get('timestamp', 'N/A')))
-                    descricao = evento.get('status', evento.get('descricao', evento.get('evento', 'N/A')))
-                    local = evento.get('local', evento.get('cidade', evento.get('origem', '')))
-                    uf = evento.get('uf', evento.get('estado', ''))
+                    # Tentar múltiplas chaves possíveis
+                    data = (evento.get('data') or evento.get('dataHora') or evento.get('timestamp') or 
+                           evento.get('dtHrCriado') or evento.get('data_evento') or evento.get('date') or 'N/A')
+                    descricao = (evento.get('status') or evento.get('descricao') or evento.get('evento') or 
+                                evento.get('tipo') or evento.get('mensagem') or evento.get('texto') or 'N/A')
+                    local = (evento.get('local') or evento.get('cidade') or evento.get('origem') or 
+                            evento.get('unidade', {}).get('endereco', {}).get('cidade', '') if isinstance(evento.get('unidade'), dict) else '')
+                    uf = (evento.get('uf') or evento.get('estado') or 
+                         evento.get('unidade', {}).get('endereco', {}).get('uf', '') if isinstance(evento.get('unidade'), dict) else '')
                 else:
-                    data = getattr(evento, 'data', getattr(evento, 'dataHora', 'N/A'))
-                    descricao = getattr(evento, 'descricao', getattr(evento, 'status', 'N/A'))
-                    local = getattr(evento, 'local', getattr(evento, 'cidade', ''))
-                    uf = getattr(evento, 'uf', '')
+                    # Tentar múltiplos atributos possíveis
+                    data = (getattr(evento, 'data', None) or getattr(evento, 'dataHora', None) or 
+                           getattr(evento, 'timestamp', None) or getattr(evento, 'dtHrCriado', None) or 'N/A')
+                    descricao = (getattr(evento, 'descricao', None) or getattr(evento, 'status', None) or 
+                               getattr(evento, 'evento', None) or getattr(evento, 'tipo', None) or 'N/A')
+                    local = (getattr(evento, 'local', None) or getattr(evento, 'cidade', None) or 
+                            getattr(evento, 'origem', None) or '')
+                    uf = (getattr(evento, 'uf', None) or getattr(evento, 'estado', None) or '')
+                
+                # Log dos valores extraídos
+                logger_rastreio.info(f"Evento {i} extraído: data={data}, descricao={descricao}, local={local}, uf={uf}")
                 
                 # Formatar data
-                if isinstance(data, str):
-                    data_formatada = data
+                if data and data != 'N/A':
+                    if isinstance(data, str):
+                        data_formatada = data
+                    else:
+                        try:
+                            data_formatada = data.strftime("%d/%m/%Y %H:%M")
+                        except:
+                            data_formatada = str(data)
                 else:
-                    try:
-                        data_formatada = data.strftime("%d/%m/%Y %H:%M")
-                    except:
-                        data_formatada = str(data)
+                    data_formatada = "Data não disponível"
                 
                 # Formatar local
-                local_completo = f"{local}/{uf}" if local and uf else local or uf or "N/A"
+                if local and uf:
+                    local_completo = f"{local}/{uf}"
+                elif local:
+                    local_completo = local
+                elif uf:
+                    local_completo = uf
+                else:
+                    local_completo = "Local não informado"
+                
+                # Garantir que descrição não seja vazia
+                if not descricao or descricao == 'N/A':
+                    descricao = "Informação não disponível"
                 
                 # Limitar tamanhos
                 descricao = descricao[:200] if len(descricao) > 200 else descricao
                 local_completo = local_completo[:100] if len(local_completo) > 100 else local_completo
                 
-                eventos_formatados.append(f"**{i}.** {data_formatada}\n{descricao}\n📍 {local_completo}")
+                # Montar texto do evento
+                evento_texto = f"**{i}.** {data_formatada}\n{descricao}\n📍 {local_completo}"
+                eventos_formatados.append(evento_texto)
+                logger_rastreio.info(f"Evento {i} formatado: {evento_texto[:100]}")
             except Exception as e:
                 logger_rastreio.error(f"Erro ao formatar evento {i}: {e}")
                 continue
