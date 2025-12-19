@@ -107,7 +107,7 @@ class Rastreio(commands.Cog):
         return bool(re.match(pattern, codigo))
     
     async def buscar_rastreio(self, codigo: str):
-        """Buscar informações de rastreamento"""
+        """Buscar informações de rastreamento com timeout"""
         codigo = codigo.upper().strip()
         
         if not self.validar_codigo(codigo):
@@ -116,14 +116,22 @@ class Rastreio(commands.Cog):
         try:
             # Prioridade 1: usar pyrastreio (biblioteca oficial que usa API dos Correios)
             if USE_PYRASTREIO:
-                resultado = await asyncio.to_thread(correios.track, codigo)
-                if resultado:
-                    # pyrastreio retorna uma lista de eventos
-                    if isinstance(resultado, list) and len(resultado) > 0:
-                        return resultado, None
-                    elif isinstance(resultado, dict):
-                        return [resultado], None
-                return None, "❌ Nenhuma informação encontrada para este código. Verifique se o código está correto."
+                # Adicionar timeout para evitar travamento
+                try:
+                    resultado = await asyncio.wait_for(
+                        asyncio.to_thread(correios.track, codigo),
+                        timeout=10.0  # 10 segundos de timeout
+                    )
+                    if resultado:
+                        # pyrastreio retorna uma lista de eventos
+                        if isinstance(resultado, list) and len(resultado) > 0:
+                            return resultado, None
+                        elif isinstance(resultado, dict):
+                            return [resultado], None
+                    return None, "❌ Nenhuma informação encontrada para este código. Verifique se o código está correto."
+                except asyncio.TimeoutError:
+                    logger_rastreio.error("Timeout ao buscar rastreamento com pyrastreio")
+                    return None, "❌ Timeout ao buscar informações. Tente novamente."
             
             # Prioridade 2: usar rastreio-correios-async (assíncrono)
             if hasattr(self, 'rastreio_client') and self.rastreio_client and self.rastreio_client is not True:
@@ -137,15 +145,28 @@ class Rastreio(commands.Cog):
                 elif USE_RASTREIO_CORREIOS:
                     # rastreio_correios pode ser função, classe ou módulo
                     try:
+                        # Adicionar timeout
                         if callable(self.rastreio_client):
                             # É uma função
-                            resultado = await asyncio.to_thread(self.rastreio_client, codigo)
+                            resultado = await asyncio.wait_for(
+                                asyncio.to_thread(self.rastreio_client, codigo),
+                                timeout=10.0
+                            )
                         elif hasattr(self.rastreio_client, 'rastrear'):
                             # É uma classe com método rastrear
-                            resultado = await asyncio.to_thread(self.rastreio_client.rastrear, codigo)
+                            resultado = await asyncio.wait_for(
+                                asyncio.to_thread(self.rastreio_client.rastrear, codigo),
+                                timeout=10.0
+                            )
                         else:
                             # Tentar usar diretamente
-                            resultado = await asyncio.to_thread(self.rastreio_client.rastrear, codigo) if hasattr(self.rastreio_client, 'rastrear') else None
+                            if hasattr(self.rastreio_client, 'rastrear'):
+                                resultado = await asyncio.wait_for(
+                                    asyncio.to_thread(self.rastreio_client.rastrear, codigo),
+                                    timeout=10.0
+                                )
+                            else:
+                                resultado = None
                         
                         if resultado:
                             if isinstance(resultado, list):
@@ -156,11 +177,17 @@ class Rastreio(commands.Cog):
                                 return [resultado], None
                             elif hasattr(resultado, 'eventos'):
                                 return resultado.eventos, None
+                    except asyncio.TimeoutError:
+                        logger_rastreio.error("Timeout ao buscar rastreamento com rastreio_correios")
+                        return None, "❌ Timeout ao buscar informações. Tente novamente."
                     except Exception as e:
                         logger_rastreio.error(f"Erro ao usar rastreio_correios: {e}", exc_info=True)
                 else:
                     # Versão síncrona (usar thread)
-                    resultado = await asyncio.to_thread(self.rastreio_client.rastrear, codigo)
+                    resultado = await asyncio.wait_for(
+                        asyncio.to_thread(self.rastreio_client.rastrear, codigo),
+                        timeout=10.0
+                    )
                     if resultado and hasattr(resultado, 'eventos'):
                         return resultado.eventos, None
                     elif resultado and isinstance(resultado, dict) and 'eventos' in resultado:
@@ -206,6 +233,23 @@ class Rastreio(commands.Cog):
     @app_commands.describe(codigo='Código de rastreamento dos Correios (ex: YO065460434BR)')
     async def rastrear(self, ctx, codigo: str = None):
         """Rastrear encomenda dos Correios pelo código"""
+        # CRÍTICO: Defer imediatamente para slash commands (antes de qualquer operação)
+        if ctx.interaction:
+            try:
+                if not ctx.interaction.response.is_done():
+                    await ctx.interaction.response.defer(ephemeral=True)
+                    logger_rastreio.info("Defer enviado para slash command")
+            except Exception as e:
+                logger_rastreio.error(f"Erro ao fazer defer: {e}")
+                # Tentar enviar resposta direta se defer falhar
+                try:
+                    await ctx.interaction.response.send_message(
+                        "⏳ Processando rastreamento...",
+                        ephemeral=True
+                    )
+                except:
+                    pass
+        
         try:
             # Tentar importar novamente se não estiver disponível (pode ter sido instalado após o bot iniciar)
             global RASTREIO_AVAILABLE, USE_PYRASTREIO
@@ -253,15 +297,20 @@ class Rastreio(commands.Cog):
                     # Para slash commands, informar que precisa fornecer o código
                     return
             
-            # Enviar mensagem de carregamento (importante fazer antes de operações longas)
-            if ctx.interaction:
-                try:
-                    await ctx.interaction.response.defer(ephemeral=True)
-                except discord.InteractionResponded:
-                    pass  # Já foi respondido
-            
-            # Buscar informações de rastreamento
-            eventos, erro = await self.buscar_rastreio(codigo)
+            # Buscar informações de rastreamento (com timeout total de 15 segundos)
+            try:
+                eventos, erro = await asyncio.wait_for(
+                    self.buscar_rastreio(codigo),
+                    timeout=15.0
+                )
+            except asyncio.TimeoutError:
+                logger_rastreio.error("Timeout geral ao buscar rastreamento")
+                await self.send_private_response(
+                    ctx,
+                    content="❌ **Timeout ao buscar informações!**\n\n"
+                           "A busca demorou muito para responder. Tente novamente em alguns instantes."
+                )
+                return
             
             if erro:
                 await self.send_private_response(ctx, content=erro)
