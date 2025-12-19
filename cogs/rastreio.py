@@ -336,6 +336,11 @@ class Rastreio(commands.Cog):
                 
                 if any(msg in resultado_lower for msg in mensagens_erro):
                     logger_rastreio.warning(f"Biblioteca retornou mensagem de erro: {resultado}")
+                    # Tentar API JSON dos Correios como fallback
+                    logger_rastreio.info("Tentando API JSON dos Correios como fallback")
+                    eventos_api, erro_api = await self.buscar_api_correios(codigo)
+                    if eventos_api:
+                        return eventos_api, None
                     return None, f"❌ {resultado}"
                 
                 # Se for string, pode ser JSON que precisa ser parseado
