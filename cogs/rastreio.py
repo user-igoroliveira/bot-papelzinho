@@ -22,30 +22,74 @@ def detectar_biblioteca():
         import rastreio_correios
         logger_rastreio.info(f"rastreio_correios importado, atributos: {dir(rastreio_correios)}")
         
+        # Verificar se tem classe Rastreio
+        if hasattr(rastreio_correios, 'Rastreio'):
+            try:
+                rastreio_client = rastreio_correios.Rastreio()
+                # Verificar métodos disponíveis
+                metodos = [m for m in dir(rastreio_client) if not m.startswith('_')]
+                logger_rastreio.info(f"Rastreio instanciado, métodos: {metodos}")
+                
+                # Tentar métodos comuns
+                if hasattr(rastreio_client, 'rastrear'):
+                    RASTREIO_AVAILABLE = True
+                    rastreio_func = rastreio_client.rastrear
+                    logger_rastreio.info("✅ rastreio_correios importado (Rastreio.rastrear)")
+                    return True
+                elif hasattr(rastreio_client, 'rastreamento'):
+                    RASTREIO_AVAILABLE = True
+                    rastreio_func = rastreio_client.rastreamento
+                    logger_rastreio.info("✅ rastreio_correios importado (Rastreio.rastreamento)")
+                    return True
+                elif hasattr(rastreio_client, 'buscar'):
+                    RASTREIO_AVAILABLE = True
+                    rastreio_func = rastreio_client.buscar
+                    logger_rastreio.info("✅ rastreio_correios importado (Rastreio.buscar)")
+                    return True
+                elif hasattr(rastreio_client, 'track'):
+                    RASTREIO_AVAILABLE = True
+                    rastreio_func = rastreio_client.track
+                    logger_rastreio.info("✅ rastreio_correios importado (Rastreio.track)")
+                    return True
+            except Exception as e:
+                logger_rastreio.warning(f"Erro ao instanciar Rastreio: {e}")
+        
+        # Verificar se tem rastreador (pode ser função ou classe)
+        if hasattr(rastreio_correios, 'rastreador'):
+            rastreador = rastreio_correios.rastreador
+            logger_rastreio.info(f"rastreador encontrado, tipo: {type(rastreador)}, callable: {callable(rastreador)}")
+            
+            if callable(rastreador):
+                # Tentar usar como função diretamente
+                try:
+                    RASTREIO_AVAILABLE = True
+                    rastreio_func = rastreador
+                    logger_rastreio.info("✅ rastreio_correios importado (rastreador como função)")
+                    return True
+                except Exception as e:
+                    logger_rastreio.warning(f"rastreador não funcionou como função: {e}")
+                
+                # Pode ser classe, tentar instanciar
+                try:
+                    rastreio_client = rastreador()
+                    metodos_rastreador = [m for m in dir(rastreio_client) if not m.startswith('_')]
+                    logger_rastreio.info(f"rastreador instanciado, métodos: {metodos_rastreador}")
+                    
+                    # Tentar métodos comuns
+                    for metodo in ['rastrear', 'rastreamento', 'buscar', 'track', 'get']:
+                        if hasattr(rastreio_client, metodo):
+                            RASTREIO_AVAILABLE = True
+                            rastreio_func = getattr(rastreio_client, metodo)
+                            logger_rastreio.info(f"✅ rastreio_correios importado (rastreador().{metodo})")
+                            return True
+                except Exception as e:
+                    logger_rastreio.warning(f"Erro ao instanciar rastreador: {e}")
+        
         # Verificar se tem função rastrear diretamente
         if hasattr(rastreio_correios, 'rastrear') and callable(rastreio_correios.rastrear):
             RASTREIO_AVAILABLE = True
             rastreio_func = rastreio_correios.rastrear
             logger_rastreio.info("✅ rastreio_correios importado (função rastrear)")
-            return True
-        
-        # Verificar se tem classe RastreioCorreios
-        if hasattr(rastreio_correios, 'RastreioCorreios'):
-            try:
-                rastreio_client = rastreio_correios.RastreioCorreios()
-                if hasattr(rastreio_client, 'rastrear'):
-                    RASTREIO_AVAILABLE = True
-                    rastreio_func = rastreio_client.rastrear
-                    logger_rastreio.info("✅ rastreio_correios importado (classe RastreioCorreios)")
-                    return True
-            except Exception as e:
-                logger_rastreio.warning(f"Erro ao instanciar RastreioCorreios: {e}")
-        
-        # Tentar usar o módulo diretamente como função
-        if callable(rastreio_correios):
-            RASTREIO_AVAILABLE = True
-            rastreio_func = rastreio_correios
-            logger_rastreio.info("✅ rastreio_correios importado (módulo callable)")
             return True
             
         logger_rastreio.warning(f"rastreio_correios instalado mas formato desconhecido. Atributos: {dir(rastreio_correios)}")
