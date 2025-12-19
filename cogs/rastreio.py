@@ -12,6 +12,8 @@ logger_rastreio = logging.getLogger(__name__)
 RASTREIO_AVAILABLE = False
 USE_PYRASTREIO = False
 USE_ASYNC = False
+USE_RASTREIO_CORREIOS = False
+rastreio_correios_module = None
 
 try:
     from pyrastreio import correios
@@ -29,13 +31,32 @@ except ImportError as e:
     except ImportError as e2:
         logger_rastreio.warning(f"rastreio_correios_async não disponível: {e2}")
         try:
-            from rastreio_correios import RastreioCorreios
-            RASTREIO_AVAILABLE = True
-            USE_ASYNC = False
-            logger_rastreio.info("Biblioteca rastreio_correios importada com sucesso")
-        except ImportError as e3:
+            # Tentar diferentes formas de importar rastreio_correios
+            global rastreio_correios_module
+            import rastreio_correios
+            rastreio_correios_module = rastreio_correios
+            # Verificar se tem função rastrear ou classe
+            if hasattr(rastreio_correios, 'rastrear'):
+                RASTREIO_AVAILABLE = True
+                USE_ASYNC = False
+                USE_RASTREIO_CORREIOS = True
+                logger_rastreio.info("Biblioteca rastreio_correios importada com sucesso (função)")
+            elif hasattr(rastreio_correios, 'RastreioCorreios'):
+                from rastreio_correios import RastreioCorreios
+                RASTREIO_AVAILABLE = True
+                USE_ASYNC = False
+                USE_RASTREIO_CORREIOS = True
+                logger_rastreio.info("Biblioteca rastreio_correios importada com sucesso (classe)")
+            else:
+                # Tentar usar diretamente o módulo
+                RASTREIO_AVAILABLE = True
+                USE_ASYNC = False
+                USE_RASTREIO_CORREIOS = True
+                logger_rastreio.info("Biblioteca rastreio_correios importada (módulo direto)")
+        except Exception as e3:
             RASTREIO_AVAILABLE = False
             USE_ASYNC = False
+            USE_RASTREIO_CORREIOS = False
             logger_rastreio.error(f"Nenhuma biblioteca de rastreamento disponível. Erros: pyrastreio={e}, async={e2}, sync={e3}")
 
 class Rastreio(commands.Cog):
@@ -55,15 +76,27 @@ class Rastreio(commands.Cog):
                     from rastreio_correios_async import Rastreio as RastreioAsync
                     self.rastreio_client = RastreioAsync()
                     logger_rastreio.info("rastreio_correios_async configurado")
-                else:
-                    from rastreio_correios import RastreioCorreios
-                    self.rastreio_client = RastreioCorreios()
-                    logger_rastreio.info("rastreio_correios configurado")
+                elif USE_RASTREIO_CORREIOS:
+                    # rastreio_correios pode ter diferentes formas de uso
+                    global rastreio_correios_module
+                    if rastreio_correios_module:
+                        if hasattr(rastreio_correios_module, 'rastrear'):
+                            # É uma função
+                            self.rastreio_client = rastreio_correios_module
+                            logger_rastreio.info("rastreio_correios configurado (função)")
+                        elif hasattr(rastreio_correios_module, 'RastreioCorreios'):
+                            # É uma classe
+                            self.rastreio_client = rastreio_correios_module.RastreioCorreios()
+                            logger_rastreio.info("rastreio_correios configurado (classe)")
+                        else:
+                            # Tentar usar o módulo diretamente
+                            self.rastreio_client = rastreio_correios_module
+                            logger_rastreio.info("rastreio_correios configurado (módulo)")
             except Exception as e:
                 self.rastreio_client = None
-                logger_rastreio.error(f"Erro ao configurar biblioteca de rastreamento: {e}")
+                logger_rastreio.error(f"Erro ao configurar biblioteca de rastreamento: {e}", exc_info=True)
         else:
-            logger_rastreio.warning("Nenhuma biblioteca de rastreamento disponível, usando web scraping como fallback")
+            logger_rastreio.warning("Nenhuma biblioteca de rastreamento disponível")
     
     def validar_codigo(self, codigo: str) -> bool:
         """Validar formato do código de rastreamento"""
@@ -101,6 +134,30 @@ class Rastreio(commands.Cog):
                         return resultado['eventos'], None
                     elif resultado and hasattr(resultado, 'eventos'):
                         return resultado.eventos, None
+                elif USE_RASTREIO_CORREIOS:
+                    # rastreio_correios pode ser função, classe ou módulo
+                    try:
+                        if callable(self.rastreio_client):
+                            # É uma função
+                            resultado = await asyncio.to_thread(self.rastreio_client, codigo)
+                        elif hasattr(self.rastreio_client, 'rastrear'):
+                            # É uma classe com método rastrear
+                            resultado = await asyncio.to_thread(self.rastreio_client.rastrear, codigo)
+                        else:
+                            # Tentar usar diretamente
+                            resultado = await asyncio.to_thread(self.rastreio_client.rastrear, codigo) if hasattr(self.rastreio_client, 'rastrear') else None
+                        
+                        if resultado:
+                            if isinstance(resultado, list):
+                                return resultado, None
+                            elif isinstance(resultado, dict):
+                                if 'eventos' in resultado:
+                                    return resultado['eventos'], None
+                                return [resultado], None
+                            elif hasattr(resultado, 'eventos'):
+                                return resultado.eventos, None
+                    except Exception as e:
+                        logger_rastreio.error(f"Erro ao usar rastreio_correios: {e}", exc_info=True)
                 else:
                     # Versão síncrona (usar thread)
                     resultado = await asyncio.to_thread(self.rastreio_client.rastrear, codigo)
