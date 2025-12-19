@@ -11,35 +11,62 @@ logger_rastreio = logging.getLogger(__name__)
 # Tentar importar biblioteca de rastreamento
 RASTREIO_AVAILABLE = False
 rastreio_func = None
+rastreio_client = None
 
-# Prioridade: usar rastreio_correios que já está instalada e funcionando
-try:
-    import rastreio_correios
-    # Verificar como usar a biblioteca
-    if hasattr(rastreio_correios, 'rastrear'):
-        RASTREIO_AVAILABLE = True
-        rastreio_func = rastreio_correios.rastrear
-        logger_rastreio.info("✅ rastreio_correios importado (função)")
-    elif hasattr(rastreio_correios, 'RastreioCorreios'):
-        RASTREIO_AVAILABLE = True
-        rastreio_func = rastreio_correios.RastreioCorreios().rastrear
-        logger_rastreio.info("✅ rastreio_correios importado (classe)")
-    else:
-        logger_rastreio.warning("rastreio_correios instalado mas formato desconhecido")
-except Exception as e:
-    logger_rastreio.warning(f"rastreio_correios não disponível: {e}")
-    # Fallback: tentar pyrastreio (pode não funcionar corretamente)
+def detectar_biblioteca():
+    """Detectar e configurar biblioteca de rastreamento"""
+    global RASTREIO_AVAILABLE, rastreio_func, rastreio_client
+    
+    # Prioridade: usar rastreio_correios que já está instalada e funcionando
+    try:
+        import rastreio_correios
+        logger_rastreio.info(f"rastreio_correios importado, atributos: {dir(rastreio_correios)}")
+        
+        # Verificar se tem função rastrear diretamente
+        if hasattr(rastreio_correios, 'rastrear') and callable(rastreio_correios.rastrear):
+            RASTREIO_AVAILABLE = True
+            rastreio_func = rastreio_correios.rastrear
+            logger_rastreio.info("✅ rastreio_correios importado (função rastrear)")
+            return True
+        
+        # Verificar se tem classe RastreioCorreios
+        if hasattr(rastreio_correios, 'RastreioCorreios'):
+            try:
+                rastreio_client = rastreio_correios.RastreioCorreios()
+                if hasattr(rastreio_client, 'rastrear'):
+                    RASTREIO_AVAILABLE = True
+                    rastreio_func = rastreio_client.rastrear
+                    logger_rastreio.info("✅ rastreio_correios importado (classe RastreioCorreios)")
+                    return True
+            except Exception as e:
+                logger_rastreio.warning(f"Erro ao instanciar RastreioCorreios: {e}")
+        
+        # Tentar usar o módulo diretamente como função
+        if callable(rastreio_correios):
+            RASTREIO_AVAILABLE = True
+            rastreio_func = rastreio_correios
+            logger_rastreio.info("✅ rastreio_correios importado (módulo callable)")
+            return True
+            
+        logger_rastreio.warning(f"rastreio_correios instalado mas formato desconhecido. Atributos: {dir(rastreio_correios)}")
+    except Exception as e:
+        logger_rastreio.warning(f"rastreio_correios não disponível: {e}")
+    
+    # Fallback: tentar pyrastreio
     try:
         import pyrastreio
-        # pyrastreio pode ser usado diretamente como função
         if callable(pyrastreio):
             RASTREIO_AVAILABLE = True
             rastreio_func = pyrastreio
             logger_rastreio.info("✅ pyrastreio importado (função direta)")
-        else:
-            logger_rastreio.warning("pyrastreio não é callable")
+            return True
     except ImportError as e2:
         logger_rastreio.warning(f"pyrastreio não disponível: {e2}")
+    
+    return False
+
+# Tentar detectar na inicialização
+detectar_biblioteca()
 
 
 class Rastreio(commands.Cog):
@@ -92,18 +119,33 @@ class Rastreio(commands.Cog):
     
     async def buscar_rastreio(self, codigo: str):
         """Buscar informações de rastreamento"""
+        global RASTREIO_AVAILABLE, rastreio_func, rastreio_client
+        
+        # Tentar detectar biblioteca novamente se não estiver disponível
         if not RASTREIO_AVAILABLE or not rastreio_func:
-            return None, "❌ Biblioteca de rastreamento não instalada. Instale: pip install pyrastreio"
+            logger_rastreio.info("Biblioteca não detectada, tentando detectar novamente...")
+            detectar_biblioteca()
+        
+        if not RASTREIO_AVAILABLE or not rastreio_func:
+            return None, "❌ Biblioteca de rastreamento não instalada. Instale: pip install rastreio-correios"
         
         if not self.validar_codigo(codigo):
             return None, "❌ Código de rastreamento inválido! Use o formato: YO065460434BR"
         
         try:
             # Executar busca com timeout
-            resultado = await asyncio.wait_for(
-                asyncio.to_thread(rastreio_func, codigo),
-                timeout=10.0
-            )
+            # Se temos um cliente instanciado, usar o método dele
+            if rastreio_client and hasattr(rastreio_client, 'rastrear'):
+                resultado = await asyncio.wait_for(
+                    asyncio.to_thread(rastreio_client.rastrear, codigo),
+                    timeout=10.0
+                )
+            else:
+                # Usar função diretamente
+                resultado = await asyncio.wait_for(
+                    asyncio.to_thread(rastreio_func, codigo),
+                    timeout=10.0
+                )
             
             if not resultado:
                 return None, "❌ Nenhuma informação encontrada para este código."
