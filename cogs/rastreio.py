@@ -258,7 +258,11 @@ class Rastreio(commands.Cog):
                 return None, "❌ Nenhuma informação encontrada para este código."
             
             # Normalizar resultado para lista
-            logger_rastreio.info(f"Resultado bruto: tipo={type(resultado)}, valor={str(resultado)[:200]}")
+            logger_rastreio.info(f"Resultado bruto: tipo={type(resultado)}")
+            if isinstance(resultado, str):
+                logger_rastreio.info(f"Conteúdo completo da string (primeiros 1000 chars): {resultado[:1000]}")
+            else:
+                logger_rastreio.info(f"Valor (primeiros 500 chars): {str(resultado)[:500]}")
             
             if isinstance(resultado, list):
                 eventos = resultado
