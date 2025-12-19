@@ -45,24 +45,27 @@ class Rastreio(commands.Cog):
     
     def __init__(self, bot):
         self.bot = bot
-        self.rastreio = None
+        self.rastreio_client = None
         if RASTREIO_AVAILABLE:
             try:
                 if USE_PYRASTREIO:
                     # pyrastreio não precisa de instância
-                    self.rastreio = True
+                    self.rastreio_client = True
                     logger_rastreio.info("pyrastreio configurado e pronto para uso")
                 elif USE_ASYNC:
-                    self.rastreio = Rastreio()
+                    # Importar Rastreio da biblioteca (não confundir com a classe do cog)
+                    from rastreio_correios_async import Rastreio as RastreioAsync
+                    self.rastreio_client = RastreioAsync()
                     logger_rastreio.info("rastreio_correios_async configurado")
                 else:
-                    self.rastreio = RastreioCorreios()
+                    from rastreio_correios import RastreioCorreios
+                    self.rastreio_client = RastreioCorreios()
                     logger_rastreio.info("rastreio_correios configurado")
             except Exception as e:
-                self.rastreio = None
+                self.rastreio_client = None
                 logger_rastreio.error(f"Erro ao configurar biblioteca de rastreamento: {e}")
         else:
-            logger_rastreio.error("Nenhuma biblioteca de rastreamento disponível!")
+            logger_rastreio.warning("Nenhuma biblioteca de rastreamento disponível, usando web scraping como fallback")
     
     def validar_codigo(self, codigo: str) -> bool:
         """Validar formato do código de rastreamento"""
@@ -147,17 +150,17 @@ class Rastreio(commands.Cog):
                 return await self.buscar_rastreio_web(codigo)
             
             # Prioridade 2: usar rastreio-correios-async (assíncrono)
-            if hasattr(self, 'rastreio') and self.rastreio and self.rastreio is not True:
+            if hasattr(self, 'rastreio_client') and self.rastreio_client and self.rastreio_client is not True:
                 if USE_ASYNC:
                     # Versão assíncrona
-                    resultado = await self.rastreio.rastrear(codigo)
+                    resultado = await self.rastreio_client.rastrear(codigo)
                     if resultado and isinstance(resultado, dict) and 'eventos' in resultado:
                         return resultado['eventos'], None
                     elif resultado and hasattr(resultado, 'eventos'):
                         return resultado.eventos, None
                 else:
                     # Versão síncrona (usar thread)
-                    resultado = await asyncio.to_thread(self.rastreio.rastrear, codigo)
+                    resultado = await asyncio.to_thread(self.rastreio_client.rastrear, codigo)
                     if resultado and hasattr(resultado, 'eventos'):
                         return resultado.eventos, None
                     elif resultado and isinstance(resultado, dict) and 'eventos' in resultado:
@@ -208,14 +211,14 @@ class Rastreio(commands.Cog):
         """Rastrear encomenda dos Correios pelo código"""
         try:
             # Não bloquear o comando - sempre tentar usar web scraping como fallback
+            # Tentar importar novamente se não estiver disponível (pode ter sido instalado após o bot iniciar)
+            global RASTREIO_AVAILABLE, USE_PYRASTREIO
             if not RASTREIO_AVAILABLE:
-                # Tentar importar novamente (pode ter sido instalado após o bot iniciar)
                 try:
                     from pyrastreio import correios
-                    global RASTREIO_AVAILABLE, USE_PYRASTREIO
                     RASTREIO_AVAILABLE = True
                     USE_PYRASTREIO = True
-                    self.rastreio = True
+                    self.rastreio_client = True
                     logger_rastreio.info("pyrastreio importado com sucesso após tentativa de uso")
                 except ImportError:
                     logger_rastreio.warning("pyrastreio não disponível, usando web scraping como fallback")
@@ -389,5 +392,12 @@ class Rastreio(commands.Cog):
 
 
 async def setup(bot):
-    await bot.add_cog(Rastreio(bot))
+    try:
+        cog = Rastreio(bot)
+        await bot.add_cog(cog)
+        logger_rastreio.info("✅ Cog Rastreio carregado com sucesso")
+        logger_rastreio.info(f"Comando /rastrear registrado e pronto para uso")
+    except Exception as e:
+        logger_rastreio.error(f"❌ Erro ao carregar cog Rastreio: {e}", exc_info=True)
+        raise
 
