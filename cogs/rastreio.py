@@ -132,7 +132,7 @@ class Rastreio(commands.Cog):
     
     @commands.hybrid_command(name='rastrear', aliases=['rastreio', 'track'])
     @app_commands.describe(codigo='Código de rastreamento dos Correios (ex: YO065460434BR)')
-    async def rastrear(self, ctx, codigo: str = None):
+    async def rastrear(self, ctx, *, codigo: str = None):
         """Rastrear encomenda dos Correios pelo código"""
         
         if not codigo:
@@ -253,5 +253,11 @@ class Rastreio(commands.Cog):
 
 
 async def setup(bot):
-    await bot.add_cog(Rastreio(bot))
-    logger_rastreio.info("✅ Cog Rastreio carregado com sucesso")
+    try:
+        cog = Rastreio(bot)
+        await bot.add_cog(cog)
+        logger_rastreio.info("✅ Cog Rastreio carregado com sucesso")
+        logger_rastreio.info("✅ Comando /rastrear registrado")
+    except Exception as e:
+        logger_rastreio.error(f"❌ Erro ao carregar cog Rastreio: {e}", exc_info=True)
+        raise
