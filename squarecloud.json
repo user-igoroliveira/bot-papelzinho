@@ -1,0 +1,7 @@
+{
+  "main": "main.py",
+  "memory": 512,
+  "start": "python3 main.py",
+  "version": "3.11"
+}
+
