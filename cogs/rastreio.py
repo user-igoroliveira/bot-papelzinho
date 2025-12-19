@@ -5,23 +5,25 @@ import re
 import asyncio
 from datetime import datetime
 
+# Tentar importar bibliotecas de rastreamento (prioridade: pyrastreio primeiro por ser mais confiável)
 try:
-    from rastreio_correios_async import Rastreio
+    from pyrastreio import correios
     RASTREIO_AVAILABLE = True
-    USE_ASYNC = True
+    USE_PYRASTREIO = True
 except ImportError:
+    USE_PYRASTREIO = False
     try:
-        from rastreio_correios import RastreioCorreios
+        from rastreio_correios_async import Rastreio
         RASTREIO_AVAILABLE = True
-        USE_ASYNC = False
+        USE_ASYNC = True
     except ImportError:
         try:
-            from pyrastreio import correios
+            from rastreio_correios import RastreioCorreios
             RASTREIO_AVAILABLE = True
-            USE_PYRASTREIO = True
+            USE_ASYNC = False
         except ImportError:
             RASTREIO_AVAILABLE = False
-            USE_PYRASTREIO = False
+            USE_ASYNC = False
 
 class Rastreio(commands.Cog):
     """Sistema de rastreamento de encomendas dos Correios"""
@@ -31,7 +33,10 @@ class Rastreio(commands.Cog):
         self.rastreio = None
         if RASTREIO_AVAILABLE:
             try:
-                if 'USE_ASYNC' in globals() and USE_ASYNC:
+                if 'USE_PYRASTREIO' in globals() and USE_PYRASTREIO:
+                    # pyrastreio não precisa de instância
+                    self.rastreio = True
+                elif 'USE_ASYNC' in globals() and USE_ASYNC:
                     self.rastreio = Rastreio()
                 elif not USE_ASYNC:
                     self.rastreio = RastreioCorreios()
@@ -54,8 +59,19 @@ class Rastreio(commands.Cog):
             return None, "❌ Código de rastreamento inválido! Use o formato: YO065460434BR"
         
         try:
-            # Tentar usar rastreio-correios-async (assíncrono)
-            if hasattr(self, 'rastreio') and self.rastreio:
+            # Prioridade 1: usar pyrastreio (mais confiável e amplamente disponível)
+            if 'USE_PYRASTREIO' in globals() and USE_PYRASTREIO:
+                resultado = await asyncio.to_thread(correios.track, codigo)
+                if resultado:
+                    # pyrastreio retorna uma lista de eventos
+                    if isinstance(resultado, list) and len(resultado) > 0:
+                        return resultado, None
+                    elif isinstance(resultado, dict):
+                        return [resultado], None
+                return None, "❌ Nenhuma informação encontrada para este código."
+            
+            # Prioridade 2: usar rastreio-correios-async (assíncrono)
+            if hasattr(self, 'rastreio') and self.rastreio and self.rastreio is not True:
                 if 'USE_ASYNC' in globals() and USE_ASYNC:
                     # Versão assíncrona
                     resultado = await self.rastreio.rastrear(codigo)
@@ -71,13 +87,6 @@ class Rastreio(commands.Cog):
                     elif resultado and isinstance(resultado, dict) and 'eventos' in resultado:
                         return resultado['eventos'], None
                 
-                return None, "❌ Nenhuma informação encontrada para este código."
-            
-            # Fallback: usar pyrastreio se disponível
-            if 'USE_PYRASTREIO' in globals() and USE_PYRASTREIO:
-                resultado = await asyncio.to_thread(correios.track, codigo)
-                if resultado:
-                    return resultado, None
                 return None, "❌ Nenhuma informação encontrada para este código."
             
             return None, "❌ Biblioteca de rastreamento não disponível."
@@ -121,10 +130,9 @@ class Rastreio(commands.Cog):
             await self.send_private_response(
                 ctx,
                 content="❌ **Biblioteca de rastreamento não instalada!**\n\n"
-                       "Instale uma das bibliotecas:\n"
-                       "• `pip install rastreio-correios-async` (recomendado)\n"
-                       "• `pip install rastreio-correios`\n"
-                       "• `pip install pyrastreio`"
+                       "Instale a biblioteca:\n"
+                       "• `pip install pyrastreio`\n\n"
+                       "A biblioteca está no requirements.txt e deve ser instalada automaticamente."
             )
             return
         
@@ -185,11 +193,12 @@ class Rastreio(commands.Cog):
         for i, evento in enumerate(eventos[:10], 1):  # Limitar a 10 eventos
             # Formatar evento dependendo da biblioteca usada
             if isinstance(evento, dict):
-                # pyrastreio retorna dict
-                data = evento.get('data', evento.get('dataHora', 'N/A'))
-                descricao = evento.get('descricao', evento.get('status', 'N/A'))
-                local = evento.get('local', evento.get('cidade', ''))
-                uf = evento.get('uf', '')
+                # pyrastreio ou outras bibliotecas que retornam dict
+                # pyrastreio usa: data, status, local
+                data = evento.get('data', evento.get('dataHora', evento.get('timestamp', 'N/A')))
+                descricao = evento.get('status', evento.get('descricao', evento.get('evento', 'N/A')))
+                local = evento.get('local', evento.get('cidade', evento.get('origem', '')))
+                uf = evento.get('uf', evento.get('estado', ''))
                 local_completo = f"{local}/{uf}" if local and uf else local or uf or "N/A"
             else:
                 # rastreio-correios retorna objeto

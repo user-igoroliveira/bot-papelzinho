@@ -4,5 +4,5 @@ psutil>=5.9.0
 aiohttp>=3.8.0
 beautifulsoup4>=4.11.0
 lxml>=4.9.0
-rastreio-correios-async>=1.0.0
+pyrastreio>=1.0.0
 
