@@ -8,19 +8,16 @@ import logging
 
 logger_rastreio = logging.getLogger(__name__)
 
-# Tentar importar bibliotecas de rastreamento
+# Tentar importar biblioteca de rastreamento
 RASTREIO_AVAILABLE = False
-USE_PYRASTREIO = False
 rastreio_func = None
 
 try:
     from pyrastreio import correios
     RASTREIO_AVAILABLE = True
-    USE_PYRASTREIO = True
     rastreio_func = correios.track
     logger_rastreio.info("✅ pyrastreio importado com sucesso")
-except ImportError as e:
-    logger_rastreio.warning(f"pyrastreio não disponível: {e}")
+except ImportError:
     try:
         import rastreio_correios
         # Verificar como usar a biblioteca
@@ -34,8 +31,8 @@ except ImportError as e:
             logger_rastreio.info("✅ rastreio_correios importado (classe)")
         else:
             logger_rastreio.warning("rastreio_correios instalado mas formato desconhecido")
-    except Exception as e2:
-        logger_rastreio.warning(f"rastreio_correios não disponível: {e2}")
+    except Exception as e:
+        logger_rastreio.warning(f"rastreio_correios não disponível: {e}")
 
 
 class Rastreio(commands.Cog):
@@ -128,6 +125,7 @@ class Rastreio(commands.Cog):
                     await ctx.author.send(embed=embed)
                 else:
                     await ctx.author.send(content=content)
+                # Confirmar no canal que a resposta foi enviada por DM
                 await ctx.send("✅ Resposta enviada por mensagem privada!", delete_after=5)
             except discord.Forbidden:
                 await ctx.send("❌ Não foi possível enviar mensagem privada. Verifique se você permite DMs de membros do servidor.")
@@ -137,14 +135,13 @@ class Rastreio(commands.Cog):
     async def rastrear(self, ctx, codigo: str = None):
         """Rastrear encomenda dos Correios pelo código"""
         
-        # Defer imediato para slash commands (CRÍTICO - antes de qualquer operação)
+        # Defer imediato para slash commands
         if ctx.interaction:
             try:
                 if not ctx.interaction.response.is_done():
                     await ctx.interaction.response.defer(ephemeral=True)
-            except Exception as e:
-                logger_rastreio.error(f"Erro ao fazer defer: {e}")
-                # Continuar mesmo se defer falhar
+            except:
+                pass
         
         try:
             # Se não forneceu código
@@ -279,9 +276,4 @@ class Rastreio(commands.Cog):
 
 
 async def setup(bot):
-    try:
-        await bot.add_cog(Rastreio(bot))
-        logger_rastreio.info("✅ Cog Rastreio carregado com sucesso")
-    except Exception as e:
-        logger_rastreio.error(f"❌ Erro ao carregar cog Rastreio: {e}", exc_info=True)
-        raise
+    await bot.add_cog(Rastreio(bot))
