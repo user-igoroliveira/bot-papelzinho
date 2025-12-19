@@ -4,26 +4,41 @@ from discord import app_commands
 import re
 import asyncio
 from datetime import datetime
+import aiohttp
+from bs4 import BeautifulSoup
 
 # Tentar importar bibliotecas de rastreamento (prioridade: pyrastreio primeiro por ser mais confiável)
+import logging
+logger_rastreio = logging.getLogger(__name__)
+
+RASTREIO_AVAILABLE = False
+USE_PYRASTREIO = False
+USE_ASYNC = False
+
 try:
     from pyrastreio import correios
     RASTREIO_AVAILABLE = True
     USE_PYRASTREIO = True
-except ImportError:
+    logger_rastreio.info("Biblioteca pyrastreio importada com sucesso")
+except ImportError as e:
     USE_PYRASTREIO = False
+    logger_rastreio.warning(f"pyrastreio não disponível: {e}")
     try:
         from rastreio_correios_async import Rastreio
         RASTREIO_AVAILABLE = True
         USE_ASYNC = True
-    except ImportError:
+        logger_rastreio.info("Biblioteca rastreio_correios_async importada com sucesso")
+    except ImportError as e2:
+        logger_rastreio.warning(f"rastreio_correios_async não disponível: {e2}")
         try:
             from rastreio_correios import RastreioCorreios
             RASTREIO_AVAILABLE = True
             USE_ASYNC = False
-        except ImportError:
+            logger_rastreio.info("Biblioteca rastreio_correios importada com sucesso")
+        except ImportError as e3:
             RASTREIO_AVAILABLE = False
             USE_ASYNC = False
+            logger_rastreio.error(f"Nenhuma biblioteca de rastreamento disponível. Erros: pyrastreio={e}, async={e2}, sync={e3}")
 
 class Rastreio(commands.Cog):
     """Sistema de rastreamento de encomendas dos Correios"""
@@ -33,15 +48,21 @@ class Rastreio(commands.Cog):
         self.rastreio = None
         if RASTREIO_AVAILABLE:
             try:
-                if 'USE_PYRASTREIO' in globals() and USE_PYRASTREIO:
+                if USE_PYRASTREIO:
                     # pyrastreio não precisa de instância
                     self.rastreio = True
-                elif 'USE_ASYNC' in globals() and USE_ASYNC:
+                    logger_rastreio.info("pyrastreio configurado e pronto para uso")
+                elif USE_ASYNC:
                     self.rastreio = Rastreio()
-                elif not USE_ASYNC:
+                    logger_rastreio.info("rastreio_correios_async configurado")
+                else:
                     self.rastreio = RastreioCorreios()
-            except:
+                    logger_rastreio.info("rastreio_correios configurado")
+            except Exception as e:
                 self.rastreio = None
+                logger_rastreio.error(f"Erro ao configurar biblioteca de rastreamento: {e}")
+        else:
+            logger_rastreio.error("Nenhuma biblioteca de rastreamento disponível!")
     
     def validar_codigo(self, codigo: str) -> bool:
         """Validar formato do código de rastreamento"""
@@ -50,6 +71,59 @@ class Rastreio(commands.Cog):
         codigo = codigo.upper().strip()
         pattern = r'^[A-Z]{2}\d{9}[A-Z]{2}$|^[A-Z0-9]{13}$'
         return bool(re.match(pattern, codigo))
+    
+    async def buscar_rastreio_web(self, codigo: str):
+        """Fallback: buscar rastreamento via web scraping direto"""
+        url = f"https://www.correios.com.br/precisa-de-ajuda/rastreamento-de-objetos?objeto={codigo}"
+        
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, headers=headers, timeout=15) as response:
+                    if response.status != 200:
+                        return None, "❌ Erro ao acessar site dos Correios."
+                    
+                    html = await response.text()
+                    soup = BeautifulSoup(html, 'html.parser')
+                    
+                    eventos = []
+                    # Buscar eventos de rastreamento na página
+                    # Os Correios usam diferentes estruturas, vamos tentar várias
+                    linhas_rastreio = soup.find_all('li', class_=re.compile(r'rastreamento|evento|historico', re.I))
+                    
+                    if not linhas_rastreio:
+                        # Tentar outra estrutura
+                        linhas_rastreio = soup.find_all('div', class_=re.compile(r'rastreamento|evento|historico', re.I))
+                    
+                    for linha in linhas_rastreio[:10]:  # Limitar a 10 eventos
+                        texto = linha.get_text(strip=True)
+                        if texto and len(texto) > 10:
+                            # Tentar extrair data e descrição
+                            partes = texto.split(' - ', 1)
+                            if len(partes) == 2:
+                                data = partes[0].strip()
+                                descricao = partes[1].strip()
+                                eventos.append({
+                                    'data': data,
+                                    'status': descricao,
+                                    'descricao': descricao,
+                                    'local': '',
+                                    'uf': ''
+                                })
+                    
+                    if eventos:
+                        return eventos, None
+                    
+                    return None, "❌ Nenhuma informação encontrada para este código."
+                    
+        except asyncio.TimeoutError:
+            return None, "❌ Timeout ao buscar informações dos Correios."
+        except Exception as e:
+            logger_rastreio.error(f"Erro no web scraping: {e}")
+            return None, f"❌ Erro ao buscar rastreamento: {str(e)}"
     
     async def buscar_rastreio(self, codigo: str):
         """Buscar informações de rastreamento"""
@@ -60,7 +134,7 @@ class Rastreio(commands.Cog):
         
         try:
             # Prioridade 1: usar pyrastreio (mais confiável e amplamente disponível)
-            if 'USE_PYRASTREIO' in globals() and USE_PYRASTREIO:
+            if USE_PYRASTREIO:
                 resultado = await asyncio.to_thread(correios.track, codigo)
                 if resultado:
                     # pyrastreio retorna uma lista de eventos
@@ -68,11 +142,13 @@ class Rastreio(commands.Cog):
                         return resultado, None
                     elif isinstance(resultado, dict):
                         return [resultado], None
-                return None, "❌ Nenhuma informação encontrada para este código."
+                # Se pyrastreio não retornou nada, tentar web scraping
+                logger_rastreio.warning("pyrastreio não retornou resultados, tentando web scraping")
+                return await self.buscar_rastreio_web(codigo)
             
             # Prioridade 2: usar rastreio-correios-async (assíncrono)
             if hasattr(self, 'rastreio') and self.rastreio and self.rastreio is not True:
-                if 'USE_ASYNC' in globals() and USE_ASYNC:
+                if USE_ASYNC:
                     # Versão assíncrona
                     resultado = await self.rastreio.rastrear(codigo)
                     if resultado and isinstance(resultado, dict) and 'eventos' in resultado:
@@ -87,12 +163,17 @@ class Rastreio(commands.Cog):
                     elif resultado and isinstance(resultado, dict) and 'eventos' in resultado:
                         return resultado['eventos'], None
                 
-                return None, "❌ Nenhuma informação encontrada para este código."
+                # Se não retornou nada, tentar web scraping
+                return await self.buscar_rastreio_web(codigo)
             
-            return None, "❌ Biblioteca de rastreamento não disponível."
+            # Fallback: usar web scraping direto (sempre disponível)
+            logger_rastreio.info("Usando web scraping como fallback")
+            return await self.buscar_rastreio_web(codigo)
             
         except Exception as e:
-            return None, f"❌ Erro ao buscar rastreamento: {str(e)}"
+            logger_rastreio.error(f"Erro ao buscar rastreamento: {e}")
+            # Tentar web scraping como último recurso
+            return await self.buscar_rastreio_web(codigo)
     
     async def send_private_response(self, ctx, content=None, embed=None):
         """Enviar resposta privada (ephemeral para slash, DM para prefixo)"""
@@ -126,15 +207,19 @@ class Rastreio(commands.Cog):
     async def rastrear(self, ctx, codigo: str = None):
         """Rastrear encomenda dos Correios pelo código"""
         
+        # Não bloquear o comando - sempre tentar usar web scraping como fallback
         if not RASTREIO_AVAILABLE:
-            await self.send_private_response(
-                ctx,
-                content="❌ **Biblioteca de rastreamento não instalada!**\n\n"
-                       "Instale a biblioteca:\n"
-                       "• `pip install pyrastreio`\n\n"
-                       "A biblioteca está no requirements.txt e deve ser instalada automaticamente."
-            )
-            return
+            # Tentar importar novamente (pode ter sido instalado após o bot iniciar)
+            try:
+                from pyrastreio import correios
+                global RASTREIO_AVAILABLE, USE_PYRASTREIO
+                RASTREIO_AVAILABLE = True
+                USE_PYRASTREIO = True
+                self.rastreio = True
+                logger_rastreio.info("pyrastreio importado com sucesso após tentativa de uso")
+            except ImportError:
+                logger_rastreio.warning("pyrastreio não disponível, usando web scraping como fallback")
+                # Continuar - o web scraping sempre funciona
         
         # Se não forneceu código, perguntar e esperar resposta
         if not codigo:
