@@ -206,130 +206,186 @@ class Rastreio(commands.Cog):
     @app_commands.describe(codigo='Código de rastreamento dos Correios (ex: YO065460434BR)')
     async def rastrear(self, ctx, codigo: str = None):
         """Rastrear encomenda dos Correios pelo código"""
-        
-        # Não bloquear o comando - sempre tentar usar web scraping como fallback
-        if not RASTREIO_AVAILABLE:
-            # Tentar importar novamente (pode ter sido instalado após o bot iniciar)
-            try:
-                from pyrastreio import correios
-                global RASTREIO_AVAILABLE, USE_PYRASTREIO
-                RASTREIO_AVAILABLE = True
-                USE_PYRASTREIO = True
-                self.rastreio = True
-                logger_rastreio.info("pyrastreio importado com sucesso após tentativa de uso")
-            except ImportError:
-                logger_rastreio.warning("pyrastreio não disponível, usando web scraping como fallback")
-                # Continuar - o web scraping sempre funciona
-        
-        # Se não forneceu código, perguntar e esperar resposta
-        if not codigo:
-            await self.send_private_response(
-                ctx,
-                content="📦 **Rastreamento de Encomendas**\n\n"
-                       "Por favor, informe o código de rastreamento.\n"
-                       "Formato: `YO065460434BR`\n\n"
-                       "Você tem 60 segundos para responder..."
-            )
+        try:
+            # Não bloquear o comando - sempre tentar usar web scraping como fallback
+            if not RASTREIO_AVAILABLE:
+                # Tentar importar novamente (pode ter sido instalado após o bot iniciar)
+                try:
+                    from pyrastreio import correios
+                    global RASTREIO_AVAILABLE, USE_PYRASTREIO
+                    RASTREIO_AVAILABLE = True
+                    USE_PYRASTREIO = True
+                    self.rastreio = True
+                    logger_rastreio.info("pyrastreio importado com sucesso após tentativa de uso")
+                except ImportError:
+                    logger_rastreio.warning("pyrastreio não disponível, usando web scraping como fallback")
+                    # Continuar - o web scraping sempre funciona
             
-            # Esperar resposta do usuário (apenas para prefix commands)
-            if not ctx.interaction:
-                def check(message):
-                    return message.author == ctx.author and message.channel == ctx.channel
+            # Se não forneceu código, perguntar e esperar resposta
+            if not codigo:
+                await self.send_private_response(
+                    ctx,
+                    content="📦 **Rastreamento de Encomendas**\n\n"
+                           "Por favor, informe o código de rastreamento.\n"
+                           "Formato: `YO065460434BR`\n\n"
+                           "Você tem 60 segundos para responder..."
+                )
                 
-                try:
-                    resposta = await self.bot.wait_for('message', check=check, timeout=60.0)
-                    codigo = resposta.content.strip()
-                except asyncio.TimeoutError:
-                    await ctx.send("⏰ Tempo esgotado! Use o comando novamente.", delete_after=10)
+                # Esperar resposta do usuário (apenas para prefix commands)
+                if not ctx.interaction:
+                    def check(message):
+                        return message.author == ctx.author and message.channel == ctx.channel
+                    
+                    try:
+                        resposta = await self.bot.wait_for('message', check=check, timeout=60.0)
+                        codigo = resposta.content.strip()
+                    except asyncio.TimeoutError:
+                        await ctx.send("⏰ Tempo esgotado! Use o comando novamente.", delete_after=10)
+                        return
+                else:
+                    # Para slash commands, informar que precisa fornecer o código
                     return
-            else:
-                # Para slash commands, informar que precisa fornecer o código
-                return
-        
-        # Enviar mensagem de carregamento
-        if ctx.interaction:
-            await ctx.interaction.response.defer(ephemeral=True)
-        
-        # Buscar informações de rastreamento
-        eventos, erro = await self.buscar_rastreio(codigo)
-        
-        if erro:
-            await self.send_private_response(ctx, content=erro)
-            return
-        
-        if not eventos:
-            await self.send_private_response(
-                ctx,
-                content=f"❌ Nenhuma informação encontrada para o código: **{codigo}**\n\n"
-                       "Verifique se o código está correto ou tente novamente mais tarde."
-            )
-            return
-        
-        # Criar embed com os resultados
-        embed = discord.Embed(
-            title=f"📦 Rastreamento - {codigo}",
-            description=f"**{len(eventos)}** evento(s) encontrado(s):",
-            color=discord.Color.blue(),
-            timestamp=datetime.utcnow()
-        )
-        
-        # Adicionar eventos (mais recentes primeiro)
-        eventos_formatados = []
-        for i, evento in enumerate(eventos[:10], 1):  # Limitar a 10 eventos
-            # Formatar evento dependendo da biblioteca usada
-            if isinstance(evento, dict):
-                # pyrastreio ou outras bibliotecas que retornam dict
-                # pyrastreio usa: data, status, local
-                data = evento.get('data', evento.get('dataHora', evento.get('timestamp', 'N/A')))
-                descricao = evento.get('status', evento.get('descricao', evento.get('evento', 'N/A')))
-                local = evento.get('local', evento.get('cidade', evento.get('origem', '')))
-                uf = evento.get('uf', evento.get('estado', ''))
-                local_completo = f"{local}/{uf}" if local and uf else local or uf or "N/A"
-            else:
-                # rastreio-correios retorna objeto
-                data = getattr(evento, 'data', getattr(evento, 'dataHora', 'N/A'))
-                descricao = getattr(evento, 'descricao', getattr(evento, 'status', 'N/A'))
-                local = getattr(evento, 'local', getattr(evento, 'cidade', ''))
-                uf = getattr(evento, 'uf', '')
-                local_completo = f"{local}/{uf}" if local and uf else local or uf or "N/A"
             
-            # Formatar data
-            if isinstance(data, str):
-                data_formatada = data
-            else:
+            # Enviar mensagem de carregamento (importante fazer antes de operações longas)
+            if ctx.interaction:
                 try:
-                    data_formatada = data.strftime("%d/%m/%Y %H:%M")
-                except:
-                    data_formatada = str(data)
+                    await ctx.interaction.response.defer(ephemeral=True)
+                except discord.InteractionResponded:
+                    pass  # Já foi respondido
             
-            eventos_formatados.append(f"**{i}.** {data_formatada}\n{descricao}\n📍 {local_completo}")
-        
-        # Dividir eventos em campos (máximo 1024 caracteres por campo)
-        campo_atual = ""
-        campo_num = 1
-        
-        for evento_texto in eventos_formatados:
-            if len(campo_atual) + len(evento_texto) + 2 > 1024:
+            # Buscar informações de rastreamento
+            eventos, erro = await self.buscar_rastreio(codigo)
+            
+            if erro:
+                await self.send_private_response(ctx, content=erro)
+                return
+            
+            if not eventos or len(eventos) == 0:
+                await self.send_private_response(
+                    ctx,
+                    content=f"❌ Nenhuma informação encontrada para o código: **{codigo}**\n\n"
+                           "Verifique se o código está correto ou tente novamente mais tarde."
+                )
+                return
+            
+            # Criar embed com os resultados
+            embed = discord.Embed(
+                title=f"📦 Rastreamento - {codigo}",
+                description=f"**{len(eventos)}** evento(s) encontrado(s):",
+                color=discord.Color.blue(),
+                timestamp=datetime.utcnow()
+            )
+            
+            # Adicionar eventos (mais recentes primeiro)
+            eventos_formatados = []
+            for i, evento in enumerate(eventos[:10], 1):  # Limitar a 10 eventos
+                try:
+                    # Formatar evento dependendo da biblioteca usada
+                    if isinstance(evento, dict):
+                        # pyrastreio ou outras bibliotecas que retornam dict
+                        data = evento.get('data', evento.get('dataHora', evento.get('timestamp', 'N/A')))
+                        descricao = evento.get('status', evento.get('descricao', evento.get('evento', 'N/A')))
+                        local = evento.get('local', evento.get('cidade', evento.get('origem', '')))
+                        uf = evento.get('uf', evento.get('estado', ''))
+                        local_completo = f"{local}/{uf}" if local and uf else local or uf or "N/A"
+                    else:
+                        # rastreio-correios retorna objeto
+                        data = getattr(evento, 'data', getattr(evento, 'dataHora', 'N/A'))
+                        descricao = getattr(evento, 'descricao', getattr(evento, 'status', 'N/A'))
+                        local = getattr(evento, 'local', getattr(evento, 'cidade', ''))
+                        uf = getattr(evento, 'uf', '')
+                        local_completo = f"{local}/{uf}" if local and uf else local or uf or "N/A"
+                    
+                    # Formatar data
+                    if isinstance(data, str):
+                        data_formatada = data
+                    else:
+                        try:
+                            data_formatada = data.strftime("%d/%m/%Y %H:%M")
+                        except:
+                            data_formatada = str(data)
+                    
+                    # Limitar tamanho dos campos para evitar erros
+                    descricao = descricao[:200] if len(descricao) > 200 else descricao
+                    local_completo = local_completo[:100] if len(local_completo) > 100 else local_completo
+                    
+                    eventos_formatados.append(f"**{i}.** {data_formatada}\n{descricao}\n📍 {local_completo}")
+                except Exception as e:
+                    logger_rastreio.error(f"Erro ao formatar evento {i}: {e}")
+                    continue
+            
+            if not eventos_formatados:
+                await self.send_private_response(
+                    ctx,
+                    content=f"❌ Erro ao processar eventos do código: **{codigo}**"
+                )
+                return
+            
+            # Dividir eventos em campos (máximo 1024 caracteres por campo)
+            campo_atual = ""
+            campo_num = 1
+            
+            for evento_texto in eventos_formatados:
+                if len(campo_atual) + len(evento_texto) + 2 > 1024:
+                    if campo_atual:  # Só adicionar se tiver conteúdo
+                        embed.add_field(
+                            name=f"📋 Eventos {campo_num}",
+                            value=campo_atual[:1024],  # Garantir limite
+                            inline=False
+                        )
+                    campo_atual = evento_texto + "\n\n"
+                    campo_num += 1
+                else:
+                    campo_atual += evento_texto + "\n\n"
+            
+            if campo_atual:
                 embed.add_field(
-                    name=f"📋 Eventos {campo_num}",
-                    value=campo_atual,
+                    name=f"📋 Eventos {campo_num}" if campo_num > 1 else "📋 Histórico",
+                    value=campo_atual[:1024],  # Garantir limite
                     inline=False
                 )
-                campo_atual = evento_texto + "\n\n"
-                campo_num += 1
+            
+            embed.set_footer(text=f"Solicitado por {ctx.author.name}")
+            
+            await self.send_private_response(ctx, embed=embed)
+            
+        except Exception as e:
+            logger_rastreio.error(f"Erro no comando rastrear: {e}", exc_info=True)
+            try:
+                await self.send_private_response(
+                    ctx,
+                    content=f"❌ Ocorreu um erro ao processar o rastreamento: {str(e)[:200]}"
+                )
+            except:
+                # Se não conseguir enviar resposta privada, tentar no canal
+                if ctx.interaction:
+                    try:
+                        await ctx.interaction.followup.send(
+                            f"❌ Erro ao processar rastreamento. Verifique os logs.",
+                            ephemeral=True
+                        )
+                    except:
+                        pass
+                else:
+                    await ctx.send("❌ Erro ao processar rastreamento. Verifique os logs.", delete_after=10)
+    
+    @commands.Cog.listener()
+    async def on_app_command_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
+        """Handler de erros para slash commands"""
+        logger_rastreio.error(f"Erro no comando slash: {error}", exc_info=True)
+        try:
+            if not interaction.response.is_done():
+                await interaction.response.send_message(
+                    "❌ Ocorreu um erro ao executar o comando. Tente novamente.",
+                    ephemeral=True
+                )
             else:
-                campo_atual += evento_texto + "\n\n"
-        
-        if campo_atual:
-            embed.add_field(
-                name=f"📋 Eventos {campo_num}" if campo_num > 1 else "📋 Histórico",
-                value=campo_atual,
-                inline=False
-            )
-        
-        embed.set_footer(text=f"Solicitado por {ctx.author.name}")
-        
-        await self.send_private_response(ctx, embed=embed)
+                await interaction.followup.send(
+                    "❌ Ocorreu um erro ao executar o comando. Tente novamente.",
+                    ephemeral=True
+                )
+        except Exception as e:
+            logger_rastreio.error(f"Erro ao enviar mensagem de erro: {e}")
 
 
 async def setup(bot):
