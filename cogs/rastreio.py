@@ -258,19 +258,55 @@ class Rastreio(commands.Cog):
                 return None, "❌ Nenhuma informação encontrada para este código."
             
             # Normalizar resultado para lista
+            logger_rastreio.info(f"Resultado bruto: tipo={type(resultado)}, valor={str(resultado)[:200]}")
+            
             if isinstance(resultado, list):
                 eventos = resultado
             elif isinstance(resultado, dict):
                 # Se for dict, pode ter 'eventos' ou ser um evento único
                 if 'eventos' in resultado:
                     eventos = resultado['eventos']
+                elif 'evento' in resultado:
+                    eventos = resultado['evento'] if isinstance(resultado['evento'], list) else [resultado['evento']]
                 else:
                     eventos = [resultado]
+            elif isinstance(resultado, str):
+                # Se for string, pode ser JSON que precisa ser parseado
+                logger_rastreio.info(f"Biblioteca retornou string, tentando parsear como JSON: {resultado[:500]}")
+                try:
+                    import json
+                    resultado_parsed = json.loads(resultado)
+                    logger_rastreio.info(f"String parseada com sucesso: tipo={type(resultado_parsed)}")
+                    # Recursivamente processar o resultado parseado
+                    if isinstance(resultado_parsed, list):
+                        eventos = resultado_parsed
+                    elif isinstance(resultado_parsed, dict):
+                        if 'eventos' in resultado_parsed:
+                            eventos = resultado_parsed['eventos']
+                        elif 'evento' in resultado_parsed:
+                            eventos = resultado_parsed['evento'] if isinstance(resultado_parsed['evento'], list) else [resultado_parsed['evento']]
+                        else:
+                            eventos = [resultado_parsed]
+                    else:
+                        eventos = [resultado_parsed]
+                except json.JSONDecodeError:
+                    # Não é JSON, pode ser HTML ou texto
+                    logger_rastreio.warning(f"String não é JSON válido: {resultado[:200]}")
+                    if '<' in resultado and '>' in resultado:
+                        return None, "❌ A biblioteca retornou HTML. Isso pode indicar um problema na biblioteca ou que o código não foi encontrado."
+                    else:
+                        return None, f"❌ A biblioteca retornou texto não estruturado: {resultado[:100]}"
+                except Exception as e:
+                    logger_rastreio.error(f"Erro ao parsear string: {e}")
+                    return None, f"❌ Erro ao processar resposta da biblioteca: {str(e)[:100]}"
             else:
                 # Tentar acessar como objeto
                 if hasattr(resultado, 'eventos'):
                     eventos = resultado.eventos
-                elif hasattr(resultado, '__iter__'):
+                elif hasattr(resultado, 'evento'):
+                    eventos = resultado.evento if isinstance(resultado.evento, list) else [resultado.evento]
+                elif hasattr(resultado, '__iter__') and not isinstance(resultado, (str, bytes)):
+                    # Não iterar sobre strings
                     eventos = list(resultado)
                 else:
                     eventos = [resultado]
