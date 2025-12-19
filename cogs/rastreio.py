@@ -4,8 +4,6 @@ from discord import app_commands
 import re
 import asyncio
 from datetime import datetime
-import aiohttp
-from bs4 import BeautifulSoup
 
 # Tentar importar bibliotecas de rastreamento (prioridade: pyrastreio primeiro por ser mais confiável)
 import logging
@@ -75,132 +73,6 @@ class Rastreio(commands.Cog):
         pattern = r'^[A-Z]{2}\d{9}[A-Z]{2}$|^[A-Z0-9]{13}$'
         return bool(re.match(pattern, codigo))
     
-    async def buscar_rastreio_web(self, codigo: str):
-        """Fallback: buscar rastreamento via API dos Correios"""
-        # API pública dos Correios para rastreamento
-        url = "https://www.correios.com.br/enviar/precisa-de-ajuda/rastreamento-de-objetos"
-        
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'application/json, text/plain, */*',
-            'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
-            'Content-Type': 'application/json',
-            'Origin': 'https://www.correios.com.br',
-            'Referer': 'https://www.correios.com.br/enviar/precisa-de-ajuda/rastreamento-de-objetos'
-        }
-        
-        # Tentar método 1: API JSON
-        try:
-            async with aiohttp.ClientSession() as session:
-                # Primeiro, tentar buscar via endpoint de API
-                api_url = f"https://www.correios.com.br/enviar/precisa-de-ajuda/rastreamento-de-objetos/objetos/{codigo}"
-                
-                async with session.get(api_url, headers=headers, timeout=15) as response:
-                    if response.status == 200:
-                        try:
-                            data = await response.json()
-                            if data and 'eventos' in data:
-                                eventos = []
-                                for evento in data['eventos']:
-                                    eventos.append({
-                                        'data': evento.get('data', evento.get('dtHrCriado', 'N/A')),
-                                        'status': evento.get('descricao', evento.get('tipo', 'N/A')),
-                                        'descricao': evento.get('descricao', evento.get('tipo', 'N/A')),
-                                        'local': evento.get('unidade', {}).get('endereco', {}).get('cidade', ''),
-                                        'uf': evento.get('unidade', {}).get('endereco', {}).get('uf', '')
-                                    })
-                                if eventos:
-                                    return eventos, None
-                        except:
-                            pass  # Se não for JSON, tentar HTML
-                    
-                    # Método 2: Web scraping da página HTML
-                    html_url = f"https://www.correios.com.br/enviar/precisa-de-ajuda/rastreamento-de-objetos?objeto={codigo}"
-                    async with session.get(html_url, headers=headers, timeout=15) as html_response:
-                        if html_response.status == 200:
-                            html = await html_response.text()
-                            soup = BeautifulSoup(html, 'html.parser')
-                            
-                            eventos = []
-                            
-                            # Tentar encontrar eventos em diferentes estruturas
-                            # Estrutura 1: divs com classe de evento
-                            eventos_divs = soup.find_all('div', class_=re.compile(r'evento|rastreamento|historico', re.I))
-                            
-                            # Estrutura 2: listas
-                            if not eventos_divs:
-                                eventos_divs = soup.find_all('li', class_=re.compile(r'evento|rastreamento|historico', re.I))
-                            
-                            # Estrutura 3: tabelas
-                            if not eventos_divs:
-                                eventos_divs = soup.find_all('tr', class_=re.compile(r'evento|rastreamento', re.I))
-                            
-                            # Estrutura 4: Buscar por texto que contenha datas
-                            if not eventos_divs:
-                                # Buscar por padrões de data (dd/mm/yyyy ou dd-mm-yyyy)
-                                texto_completo = soup.get_text()
-                                linhas = texto_completo.split('\n')
-                                for linha in linhas:
-                                    linha = linha.strip()
-                                    # Procurar por padrão de data seguido de descrição
-                                    match = re.search(r'(\d{2}[/-]\d{2}[/-]\d{4}.*?)(?:\n|$)', linha)
-                                    if match and len(linha) > 20:
-                                        partes = linha.split(' - ', 1) if ' - ' in linha else linha.split(' | ', 1)
-                                        if len(partes) >= 1:
-                                            data = partes[0].strip()[:20]
-                                            descricao = partes[1].strip() if len(partes) > 1 else linha[20:].strip()
-                                            if descricao and len(descricao) > 5:
-                                                eventos.append({
-                                                    'data': data,
-                                                    'status': descricao[:200],
-                                                    'descricao': descricao[:200],
-                                                    'local': '',
-                                                    'uf': ''
-                                                })
-                            
-                            # Processar eventos encontrados
-                            for div in eventos_divs[:10]:
-                                texto = div.get_text(strip=True)
-                                if texto and len(texto) > 10:
-                                    # Tentar extrair data e descrição
-                                    partes = texto.split(' - ', 1) if ' - ' in texto else texto.split(' | ', 1)
-                                    if len(partes) >= 1:
-                                        data = partes[0].strip()[:20]
-                                        descricao = partes[1].strip() if len(partes) > 1 else texto[20:].strip()
-                                        if descricao and len(descricao) > 5:
-                                            eventos.append({
-                                                'data': data,
-                                                'status': descricao[:200],
-                                                'descricao': descricao[:200],
-                                                'local': '',
-                                                'uf': ''
-                                            })
-                            
-                            if eventos:
-                                # Remover duplicatas
-                                eventos_unicos = []
-                                vistos = set()
-                                for evento in eventos:
-                                    chave = f"{evento['data']}-{evento['descricao'][:50]}"
-                                    if chave not in vistos:
-                                        vistos.add(chave)
-                                        eventos_unicos.append(evento)
-                                
-                                return eventos_unicos[:10], None
-                            
-                            return None, "❌ Nenhuma informação encontrada para este código."
-                        else:
-                            return None, f"❌ Erro ao acessar site dos Correios (Status: {html_response.status})"
-                            
-        except asyncio.TimeoutError:
-            return None, "❌ Timeout ao buscar informações dos Correios. Tente novamente."
-        except aiohttp.ClientError as e:
-            logger_rastreio.error(f"Erro de conexão: {e}")
-            return None, "❌ Erro de conexão com os Correios. Verifique sua internet."
-        except Exception as e:
-            logger_rastreio.error(f"Erro no web scraping: {e}", exc_info=True)
-            return None, f"❌ Erro ao buscar rastreamento: {str(e)[:100]}"
-    
     async def buscar_rastreio(self, codigo: str):
         """Buscar informações de rastreamento"""
         codigo = codigo.upper().strip()
@@ -209,7 +81,7 @@ class Rastreio(commands.Cog):
             return None, "❌ Código de rastreamento inválido! Use o formato: YO065460434BR"
         
         try:
-            # Prioridade 1: usar pyrastreio (mais confiável e amplamente disponível)
+            # Prioridade 1: usar pyrastreio (biblioteca oficial que usa API dos Correios)
             if USE_PYRASTREIO:
                 resultado = await asyncio.to_thread(correios.track, codigo)
                 if resultado:
@@ -218,9 +90,7 @@ class Rastreio(commands.Cog):
                         return resultado, None
                     elif isinstance(resultado, dict):
                         return [resultado], None
-                # Se pyrastreio não retornou nada, tentar web scraping
-                logger_rastreio.warning("pyrastreio não retornou resultados, tentando web scraping")
-                return await self.buscar_rastreio_web(codigo)
+                return None, "❌ Nenhuma informação encontrada para este código. Verifique se o código está correto."
             
             # Prioridade 2: usar rastreio-correios-async (assíncrono)
             if hasattr(self, 'rastreio_client') and self.rastreio_client and self.rastreio_client is not True:
@@ -239,17 +109,14 @@ class Rastreio(commands.Cog):
                     elif resultado and isinstance(resultado, dict) and 'eventos' in resultado:
                         return resultado['eventos'], None
                 
-                # Se não retornou nada, tentar web scraping
-                return await self.buscar_rastreio_web(codigo)
+                return None, "❌ Nenhuma informação encontrada para este código. Verifique se o código está correto."
             
-            # Fallback: usar web scraping direto (sempre disponível)
-            logger_rastreio.info("Usando web scraping como fallback")
-            return await self.buscar_rastreio_web(codigo)
+            # Se nenhuma biblioteca está disponível
+            return None, "❌ Biblioteca de rastreamento não instalada. Instale: pip install pyrastreio"
             
         except Exception as e:
-            logger_rastreio.error(f"Erro ao buscar rastreamento: {e}")
-            # Tentar web scraping como último recurso
-            return await self.buscar_rastreio_web(codigo)
+            logger_rastreio.error(f"Erro ao buscar rastreamento: {e}", exc_info=True)
+            return None, f"❌ Erro ao buscar rastreamento: {str(e)[:150]}"
     
     async def send_private_response(self, ctx, content=None, embed=None):
         """Enviar resposta privada (ephemeral para slash, DM para prefixo)"""
@@ -283,7 +150,6 @@ class Rastreio(commands.Cog):
     async def rastrear(self, ctx, codigo: str = None):
         """Rastrear encomenda dos Correios pelo código"""
         try:
-            # Não bloquear o comando - sempre tentar usar web scraping como fallback
             # Tentar importar novamente se não estiver disponível (pode ter sido instalado após o bot iniciar)
             global RASTREIO_AVAILABLE, USE_PYRASTREIO
             if not RASTREIO_AVAILABLE:
@@ -294,8 +160,16 @@ class Rastreio(commands.Cog):
                     self.rastreio_client = True
                     logger_rastreio.info("pyrastreio importado com sucesso após tentativa de uso")
                 except ImportError:
-                    logger_rastreio.warning("pyrastreio não disponível, usando web scraping como fallback")
-                    # Continuar - o web scraping sempre funciona
+                    logger_rastreio.warning("pyrastreio não disponível")
+                    await self.send_private_response(
+                        ctx,
+                        content="❌ **Biblioteca de rastreamento não instalada!**\n\n"
+                               "Para usar o comando `/rastrear`, instale a biblioteca:\n"
+                               "• `pip install pyrastreio`\n\n"
+                               "A biblioteca está no `requirements.txt` e deve ser instalada automaticamente.\n"
+                               "Verifique os logs da Square Cloud se a instalação falhou."
+                    )
+                    return
             
             # Se não forneceu código, perguntar e esperar resposta
             if not codigo:
