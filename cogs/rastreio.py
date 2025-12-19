@@ -275,6 +275,24 @@ class Rastreio(commands.Cog):
                 else:
                     eventos = [resultado]
             elif isinstance(resultado, str):
+                # Se for string, verificar se é mensagem de erro
+                resultado_lower = resultado.lower().strip()
+                
+                # Verificar mensagens de erro comuns
+                mensagens_erro = [
+                    'objeto não encontrado',
+                    'não encontrado',
+                    'código inválido',
+                    'objeto não localizado',
+                    'não localizado',
+                    'erro',
+                    'error'
+                ]
+                
+                if any(msg in resultado_lower for msg in mensagens_erro):
+                    logger_rastreio.warning(f"Biblioteca retornou mensagem de erro: {resultado}")
+                    return None, f"❌ {resultado}"
+                
                 # Se for string, pode ser JSON que precisa ser parseado
                 logger_rastreio.info(f"Biblioteca retornou string, tentando parsear como JSON: {resultado[:500]}")
                 try:
@@ -299,7 +317,8 @@ class Rastreio(commands.Cog):
                     if '<' in resultado and '>' in resultado:
                         return None, "❌ A biblioteca retornou HTML. Isso pode indicar um problema na biblioteca ou que o código não foi encontrado."
                     else:
-                        return None, f"❌ A biblioteca retornou texto não estruturado: {resultado[:100]}"
+                        # Se não é JSON nem HTML, pode ser mensagem de texto simples
+                        return None, f"❌ {resultado}"
                 except Exception as e:
                     logger_rastreio.error(f"Erro ao parsear string: {e}")
                     return None, f"❌ Erro ao processar resposta da biblioteca: {str(e)[:100]}"
