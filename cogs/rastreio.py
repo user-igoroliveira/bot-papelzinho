@@ -5,6 +5,8 @@ import re
 import asyncio
 from datetime import datetime
 import logging
+import aiohttp
+import json
 
 logger_rastreio = logging.getLogger(__name__)
 
@@ -160,6 +162,49 @@ class Rastreio(commands.Cog):
         codigo = codigo.upper().strip()
         pattern = r'^[A-Z]{2}\d{9}[A-Z]{2}$|^[A-Z0-9]{13}$'
         return bool(re.match(pattern, codigo))
+    
+    async def buscar_api_correios(self, codigo: str):
+        """Buscar rastreamento usando API JSON dos Correios (fallback)"""
+        url = f"https://proxyapp.correios.com.br/v1/sro-rastro/{codigo}"
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Accept': 'application/json'
+        }
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, headers=headers, timeout=10) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        logger_rastreio.info(f"API JSON retornou: {json.dumps(data, indent=2)[:500]}")
+                        
+                        if data and 'objetos' in data and data['objetos']:
+                            objeto = data['objetos'][0]
+                            if 'eventos' in objeto and objeto['eventos']:
+                                eventos = []
+                                for ev in objeto['eventos']:
+                                    evento_formatado = {
+                                        'data': ev.get('dtHrCriado', ev.get('data', '')),
+                                        'descricao': ev.get('descricao', ev.get('tipo', '')),
+                                        'local': ev.get('unidade', {}).get('endereco', {}).get('cidade', ''),
+                                        'uf': ev.get('unidade', {}).get('endereco', {}).get('uf', '')
+                                    }
+                                    eventos.append(evento_formatado)
+                                
+                                if eventos:
+                                    logger_rastreio.info(f"API JSON retornou {len(eventos)} eventos")
+                                    return eventos, None
+                        
+                        return None, "❌ Nenhuma informação encontrada na API dos Correios."
+                    else:
+                        logger_rastreio.warning(f"API JSON retornou status {response.status}")
+                        return None, f"❌ Erro ao acessar API dos Correios (Status: {response.status})"
+        except asyncio.TimeoutError:
+            logger_rastreio.warning("Timeout ao acessar API JSON")
+            return None, "❌ Timeout ao buscar informações."
+        except Exception as e:
+            logger_rastreio.error(f"Erro na API JSON: {e}", exc_info=True)
+            return None, f"❌ Erro ao buscar na API: {str(e)[:100]}"
     
     async def buscar_rastreio(self, codigo: str):
         """Buscar informações de rastreamento"""
@@ -317,7 +362,12 @@ class Rastreio(commands.Cog):
                     if '<' in resultado and '>' in resultado:
                         return None, "❌ A biblioteca retornou HTML. Isso pode indicar um problema na biblioteca ou que o código não foi encontrado."
                     else:
-                        # Se não é JSON nem HTML, pode ser mensagem de texto simples
+                        # Se não é JSON nem HTML, pode ser mensagem de erro
+                        # Tentar API JSON dos Correios como fallback
+                        logger_rastreio.info(f"Biblioteca retornou mensagem de erro, tentando API JSON como fallback")
+                        eventos_api, erro_api = await self.buscar_api_correios(codigo)
+                        if eventos_api:
+                            return eventos_api, None
                         return None, f"❌ {resultado}"
                 except Exception as e:
                     logger_rastreio.error(f"Erro ao parsear string: {e}")
