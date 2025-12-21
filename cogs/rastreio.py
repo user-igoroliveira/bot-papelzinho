@@ -185,10 +185,12 @@ class Rastreio(commands.Cog):
             'Content-Type': 'application/json',
         }
         
-        # Adicionar autenticação Bearer Token se a chave estiver disponível
+        # Adicionar autenticação - tentar sem Bearer primeiro (código de acesso direto)
+        # O endpoint proxyapp pode não aceitar Bearer Token
         if CORREIOS_API_KEY:
-            headers['Authorization'] = f'Bearer {CORREIOS_API_KEY}'
-            logger_rastreio.info("Usando autenticação Bearer Token na API dos Correios")
+            # Tentar apenas o código de acesso como header customizado ou query param
+            # Primeiro, tentar sem autenticação (o endpoint proxyapp pode ser público)
+            logger_rastreio.info("Tentando acesso à API dos Correios sem autenticação (endpoint proxyapp)")
         else:
             logger_rastreio.warning("Chave de acesso da API dos Correios não encontrada")
         
