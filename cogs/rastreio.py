@@ -164,62 +164,100 @@ class Rastreio(commands.Cog):
         return bool(re.match(pattern, codigo))
     
     async def buscar_api_correios(self, codigo: str):
-        """Buscar rastreamento usando API JSON dos Correios (fallback)"""
+        """Buscar rastreamento usando API JSON dos Correios"""
+        # URL oficial da API dos Correios
         url = f"https://proxyapp.correios.com.br/v1/sro-rastro/{codigo}"
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            'Accept': 'application/json'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'application/json',
+            'Accept-Language': 'pt-BR,pt;q=0.9',
+            'Referer': 'https://www.correios.com.br/',
+            'Origin': 'https://www.correios.com.br'
         }
         
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.get(url, headers=headers, timeout=10) as response:
+                async with session.get(url, headers=headers, timeout=15) as response:
                     logger_rastreio.info(f"API JSON status: {response.status} para código {codigo}")
                     
                     if response.status == 200:
                         data = await response.json()
-                        logger_rastreio.info(f"API JSON retornou dados: {json.dumps(data, indent=2, ensure_ascii=False)[:1000]}")
+                        logger_rastreio.info(f"API JSON retornou: {json.dumps(data, indent=2, ensure_ascii=False)[:1500]}")
                         
-                        if data and 'objetos' in data and data['objetos']:
+                        # Verificar estrutura de resposta
+                        if not data:
+                            logger_rastreio.warning("API retornou dados vazios")
+                            return None, "❌ Nenhuma informação encontrada na API dos Correios."
+                        
+                        if 'objetos' in data and data['objetos']:
                             objeto = data['objetos'][0]
                             
-                            # Verificar se tem erro no objeto
-                            if 'mensagem' in objeto and objeto['mensagem']:
-                                logger_rastreio.warning(f"API retornou mensagem: {objeto['mensagem']}")
-                                return None, f"❌ {objeto['mensagem']}"
+                            # Verificar se tem mensagem de erro no objeto
+                            if 'mensagem' in objeto:
+                                mensagem = objeto['mensagem']
+                                if mensagem and mensagem.strip():
+                                    logger_rastreio.warning(f"API retornou mensagem: {mensagem}")
+                                    # Se a mensagem indicar erro, retornar None mas não mostrar erro técnico
+                                    if any(palavra in mensagem.lower() for palavra in ['não encontrado', 'não localizado', 'inexistente']):
+                                        return None, f"❌ {mensagem}"
                             
+                            # Verificar se tem eventos
                             if 'eventos' in objeto and objeto['eventos']:
                                 eventos = []
                                 for ev in objeto['eventos']:
                                     # Extrair dados do evento
                                     unidade = ev.get('unidade', {})
-                                    endereco = unidade.get('endereco', {}) if isinstance(unidade, dict) else {}
+                                    endereco = {}
+                                    
+                                    if isinstance(unidade, dict):
+                                        endereco = unidade.get('endereco', {})
+                                        if not isinstance(endereco, dict):
+                                            # Pode ser um objeto com atributos
+                                            endereco = {}
+                                    
+                                    # Extrair cidade e UF
+                                    cidade = ''
+                                    uf = ''
+                                    
+                                    if isinstance(endereco, dict):
+                                        cidade = endereco.get('cidade', '') or endereco.get('cidade', '')
+                                        uf = endereco.get('uf', '') or endereco.get('estado', '')
+                                    elif hasattr(endereco, 'cidade'):
+                                        cidade = getattr(endereco, 'cidade', '')
+                                        uf = getattr(endereco, 'uf', '') or getattr(endereco, 'estado', '')
                                     
                                     evento_formatado = {
-                                        'data': ev.get('dtHrCriado', ev.get('data', '')),
-                                        'descricao': ev.get('descricao', ev.get('tipo', '')),
-                                        'local': endereco.get('cidade', '') if isinstance(endereco, dict) else '',
-                                        'uf': endereco.get('uf', '') if isinstance(endereco, dict) else ''
+                                        'data': ev.get('dtHrCriado', ev.get('data', ev.get('dataHora', ''))),
+                                        'descricao': ev.get('descricao', ev.get('tipo', ev.get('status', ''))),
+                                        'local': cidade,
+                                        'uf': uf
                                     }
                                     eventos.append(evento_formatado)
                                 
                                 if eventos:
-                                    logger_rastreio.info(f"API JSON retornou {len(eventos)} eventos")
+                                    logger_rastreio.info(f"✅ API JSON retornou {len(eventos)} eventos")
                                     return eventos, None
+                                else:
+                                    logger_rastreio.warning("API retornou lista de eventos vazia após formatação")
                             else:
                                 logger_rastreio.warning("API retornou objeto mas sem eventos")
-                                return None, "❌ Nenhum evento encontrado na API dos Correios."
-                        else:
-                            logger_rastreio.warning("API retornou dados mas sem objetos")
-                            return None, "❌ Nenhuma informação encontrada na API dos Correios."
+                        
+                        # Se chegou aqui, não encontrou eventos
+                        return None, "❌ Nenhum evento encontrado para este código de rastreamento."
                     else:
                         logger_rastreio.warning(f"API JSON retornou status {response.status}")
-                        text = await response.text()
-                        logger_rastreio.warning(f"Resposta da API: {text[:200]}")
+                        try:
+                            text = await response.text()
+                            logger_rastreio.warning(f"Resposta da API: {text[:500]}")
+                        except:
+                            pass
                         return None, f"❌ Erro ao acessar API dos Correios (Status: {response.status})"
         except asyncio.TimeoutError:
             logger_rastreio.warning("Timeout ao acessar API JSON")
-            return None, "❌ Timeout ao buscar informações."
+            return None, "❌ Timeout ao buscar informações. Tente novamente."
+        except aiohttp.ClientError as e:
+            logger_rastreio.error(f"Erro de conexão na API JSON: {e}", exc_info=True)
+            return None, "❌ Erro de conexão ao buscar informações."
         except Exception as e:
             logger_rastreio.error(f"Erro na API JSON: {e}", exc_info=True)
             return None, f"❌ Erro ao buscar na API: {str(e)[:100]}"
