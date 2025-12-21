@@ -7,8 +7,17 @@ from datetime import datetime
 import logging
 import aiohttp
 import json
+import os
+from dotenv import load_dotenv
+import base64
+
+# Carregar variáveis de ambiente
+load_dotenv()
 
 logger_rastreio = logging.getLogger(__name__)
+
+# Chave de acesso da API dos Correios
+CORREIOS_API_KEY = os.getenv('CORREIOS_API_KEY', 'cws-ch1_04Rs241khCNMzGVUEo6MzAzNTEwOTkwMDAxMzc6OTkxMjcwODg0Nw_MTpJbmQ62xVSYPc7zEhY7ss')
 
 # Tentar importar biblioteca de rastreamento
 RASTREIO_AVAILABLE = False
@@ -164,21 +173,24 @@ class Rastreio(commands.Cog):
         return bool(re.match(pattern, codigo))
     
     async def buscar_api_correios(self, codigo: str):
-        """Buscar rastreamento usando API JSON dos Correios (endpoint usado pelo site oficial)"""
-        # URL usada pelo site oficial dos Correios para rastreamento
+        """Buscar rastreamento usando API oficial dos Correios com autenticação"""
+        # URL da API oficial dos Correios
         url = f"https://proxyapp.correios.com.br/v1/sro-rastro/{codigo}"
+        
+        # Headers com autenticação
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'application/json, text/plain, */*',
-            'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'Referer': 'https://www.correios.com.br/precisa-de-ajuda/rastreamento-de-objetos',
-            'Origin': 'https://www.correios.com.br',
-            'Connection': 'keep-alive',
-            'Sec-Fetch-Dest': 'empty',
-            'Sec-Fetch-Mode': 'cors',
-            'Sec-Fetch-Site': 'same-site'
+            'Accept': 'application/json',
+            'Accept-Language': 'pt-BR,pt;q=0.9',
+            'Content-Type': 'application/json',
         }
+        
+        # Adicionar autenticação Bearer Token se a chave estiver disponível
+        if CORREIOS_API_KEY:
+            headers['Authorization'] = f'Bearer {CORREIOS_API_KEY}'
+            logger_rastreio.info("Usando autenticação Bearer Token na API dos Correios")
+        else:
+            logger_rastreio.warning("Chave de acesso da API dos Correios não encontrada")
         
         try:
             async with aiohttp.ClientSession() as session:
