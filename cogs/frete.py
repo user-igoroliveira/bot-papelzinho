@@ -5,6 +5,9 @@ import aiohttp
 import asyncio
 import re
 import json
+import logging
+
+logger_frete = logging.getLogger(__name__)
 
 class Frete(commands.Cog):
     """Sistema de cálculo de frete dos Correios"""
@@ -41,7 +44,11 @@ class Frete(commands.Cog):
         if self.token_cache and self.token_expires_at:
             import time
             if time.time() < self.token_expires_at:
+                logger_frete.info("Token em cache ainda válido, reutilizando")
                 return self.token_cache
+        
+        logger_frete.info(f"Obtendo novo token da API dos Correios - URL: {self.token_url}")
+        logger_frete.info(f"Contrato: {self.numero_contrato}")
         
         async with aiohttp.ClientSession() as session:
             payload = {
@@ -50,33 +57,54 @@ class Frete(commands.Cog):
             }
             
             try:
+                logger_frete.debug(f"Payload de autenticação: {{'numero': '{self.numero_contrato}', 'senha': '***'}}")
+                
                 async with session.post(
                     self.token_url,
                     json=payload,
                     headers={"Content-Type": "application/json"}
                 ) as response:
+                    logger_frete.info(f"Resposta da API de token - Status: {response.status}")
+                    
                     if response.status == 200:
-                        data = await response.json()
-                        token = data.get("token")
-                        if token:
-                            # Cache do token por 1 hora (3600 segundos)
-                            import time
-                            self.token_cache = token
-                            self.token_expires_at = time.time() + 3600
-                            return token
+                        try:
+                            data = await response.json()
+                            logger_frete.debug(f"JSON recebido: {json.dumps(data, indent=2)}")
+                            token = data.get("token")
+                            if token:
+                                # Cache do token por 1 hora (3600 segundos)
+                                import time
+                                self.token_cache = token
+                                self.token_expires_at = time.time() + 3600
+                                logger_frete.info("Token obtido com sucesso e armazenado em cache")
+                                return token
+                            else:
+                                logger_frete.error(f"Token não encontrado na resposta: {data}")
+                                return None
+                        except json.JSONDecodeError as e:
+                            response_text = await response.text()
+                            logger_frete.error(f"Erro ao decodificar JSON da resposta: {e} - Resposta: {response_text[:500]}")
+                            return None
                     else:
-                        error_text = await response.text()
-                        print(f"Erro ao obter token: {response.status} - {error_text}")
+                        response_text = await response.text()
+                        logger_frete.error(f"Erro HTTP ao obter token: {response.status} - {response_text[:500]}")
                         return None
+            except aiohttp.ClientError as e:
+                logger_frete.error(f"Erro de conexão ao obter token: {e}")
+                return None
             except Exception as e:
-                print(f"Exceção ao obter token: {e}")
+                logger_frete.error(f"Exceção ao obter token: {e}", exc_info=True)
                 return None
     
     async def calcular_frete(self, cep_origem, cep_destino, comprimento, largura, altura, peso=1.0):
         """Calcular frete usando a API dos Correios"""
+        logger_frete.info(f"Calculando frete - CEP Origem: {cep_origem}, CEP Destino: {cep_destino}")
+        logger_frete.info(f"Dimensões: {comprimento}x{largura}x{altura}cm, Peso: {peso}kg")
+        
         token = await self.obter_token()
         if not token:
-            return None, "❌ Erro ao autenticar na API dos Correios. Tente novamente mais tarde."
+            logger_frete.error("Falha ao obter token de autenticação")
+            return None, "❌ Erro ao autenticar na API dos Correios. Verifique os logs para mais detalhes."
         
         async with aiohttp.ClientSession() as session:
             payload = {
@@ -98,23 +126,41 @@ class Frete(commands.Cog):
             }
             
             try:
+                logger_frete.debug(f"Enviando requisição para: {self.calculo_url}")
+                logger_frete.debug(f"Payload: {json.dumps(payload, indent=2)}")
+                
                 async with session.post(
                     self.calculo_url,
                     json=payload,
                     headers=headers
                 ) as response:
+                    logger_frete.info(f"Resposta da API de cálculo - Status: {response.status}")
+                    
                     if response.status == 200:
-                        data = await response.json()
-                        return data, None
+                        try:
+                            data = await response.json()
+                            logger_frete.info("Cálculo de frete realizado com sucesso")
+                            logger_frete.debug(f"Resposta completa: {json.dumps(data, indent=2)[:1000]}")
+                            return data, None
+                        except json.JSONDecodeError as e:
+                            response_text = await response.text()
+                            logger_frete.error(f"Erro ao decodificar JSON da resposta: {e} - Resposta: {response_text[:500]}")
+                            return None, "❌ Erro ao processar resposta da API dos Correios."
                     else:
-                        error_text = await response.text()
                         try:
                             error_json = await response.json()
-                            error_msg = error_json.get("mensagem", error_text)
+                            error_msg = error_json.get("mensagem", error_json.get("erro", str(error_json)))
+                            logger_frete.error(f"Erro HTTP {response.status}: {error_msg}")
                         except:
-                            error_msg = error_text
-                        return None, f"❌ Erro na API dos Correios: {error_msg}"
+                            response_text = await response.text()
+                            error_msg = response_text[:500] if response_text else "Erro desconhecido"
+                            logger_frete.error(f"Erro HTTP {response.status}: {error_msg}")
+                        return None, f"❌ Erro na API dos Correios (Status {response.status}): {error_msg}"
+            except aiohttp.ClientError as e:
+                logger_frete.error(f"Erro de conexão ao calcular frete: {e}")
+                return None, f"❌ Erro de conexão com a API dos Correios: {str(e)}"
             except Exception as e:
+                logger_frete.error(f"Exceção ao calcular frete: {e}", exc_info=True)
                 return None, f"❌ Erro ao calcular frete: {str(e)}"
     
     def parsear_medida(self, texto):
