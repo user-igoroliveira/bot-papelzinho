@@ -53,8 +53,13 @@ async def on_ready():
     try:
         synced = await bot.tree.sync()
         logger.info(f'Sincronizados {len(synced)} comando(s) slash')
+        # Listar comandos sincronizados para debug
+        for cmd in synced:
+            logger.info(f'  - /{cmd.name}')
     except Exception as e:
         logger.error(f'Erro ao sincronizar comandos: {e}')
+        import traceback
+        logger.error(traceback.format_exc())
     
     # Definir status do bot
     await bot.change_presence(
@@ -87,6 +92,7 @@ async def load_extensions():
         'cogs.caixas',
         'cogs.site',
         'cogs.rastreio',
+        'cogs.frete',
     ]
     
     for extension in extensions:
@@ -95,6 +101,8 @@ async def load_extensions():
             logger.info(f'Extensão {extension} carregada com sucesso')
         except Exception as e:
             logger.error(f'Erro ao carregar extensão {extension}: {e}')
+            import traceback
+            logger.error(traceback.format_exc())
 
 
 async def main():
