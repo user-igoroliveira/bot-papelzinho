@@ -356,14 +356,18 @@ class Rastreio(commands.Cog):
                     logger_rastreio.warning(f"Biblioteca retornou mensagem de erro: {resultado}")
                     # Tentar API JSON dos Correios como fallback
                     logger_rastreio.info("Biblioteca retornou erro, tentando API JSON dos Correios como fallback")
-                    eventos_api, erro_api = await self.buscar_api_correios(codigo)
-                    logger_rastreio.info(f"Fallback API retornou: eventos={eventos_api is not None}, erro={erro_api}")
-                    if eventos_api:
-                        logger_rastreio.info(f"Fallback API funcionou! Retornando {len(eventos_api)} eventos")
-                        return eventos_api, None
-                    # Se fallback também falhou, retornar erro original da biblioteca
-                    logger_rastreio.warning(f"Fallback API também falhou: {erro_api}")
-                    return None, f"❌ {resultado}"
+                    try:
+                        eventos_api, erro_api = await self.buscar_api_correios(codigo)
+                        logger_rastreio.info(f"Fallback API retornou: eventos={eventos_api is not None}, erro={erro_api}")
+                        if eventos_api:
+                            logger_rastreio.info(f"✅ Fallback API funcionou! Retornando {len(eventos_api)} eventos")
+                            return eventos_api, None
+                        # Se fallback também falhou, retornar erro mais informativo
+                        logger_rastreio.warning(f"Fallback API também falhou: {erro_api}")
+                        return None, f"❌ {resultado}\n\n💡 Tente verificar se o código está correto ou aguarde alguns minutos e tente novamente."
+                    except Exception as e:
+                        logger_rastreio.error(f"Erro ao executar fallback API: {e}", exc_info=True)
+                        return None, f"❌ {resultado}"
                 
                 # Se for string, pode ser JSON que precisa ser parseado
                 logger_rastreio.info(f"Biblioteca retornou string, tentando parsear como JSON: {resultado[:500]}")
