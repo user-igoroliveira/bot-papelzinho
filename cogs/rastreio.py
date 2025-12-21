@@ -164,15 +164,20 @@ class Rastreio(commands.Cog):
         return bool(re.match(pattern, codigo))
     
     async def buscar_api_correios(self, codigo: str):
-        """Buscar rastreamento usando API JSON dos Correios"""
-        # URL oficial da API dos Correios
+        """Buscar rastreamento usando API JSON dos Correios (endpoint usado pelo site oficial)"""
+        # URL usada pelo site oficial dos Correios para rastreamento
         url = f"https://proxyapp.correios.com.br/v1/sro-rastro/{codigo}"
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'application/json',
-            'Accept-Language': 'pt-BR,pt;q=0.9',
-            'Referer': 'https://www.correios.com.br/',
-            'Origin': 'https://www.correios.com.br'
+            'Accept': 'application/json, text/plain, */*',
+            'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Referer': 'https://www.correios.com.br/precisa-de-ajuda/rastreamento-de-objetos',
+            'Origin': 'https://www.correios.com.br',
+            'Connection': 'keep-alive',
+            'Sec-Fetch-Dest': 'empty',
+            'Sec-Fetch-Mode': 'cors',
+            'Sec-Fetch-Site': 'same-site'
         }
         
         try:
@@ -269,33 +274,16 @@ class Rastreio(commands.Cog):
         if not self.validar_codigo(codigo):
             return None, "❌ Código de rastreamento inválido! Use o formato: YO065460434BR"
         
-        # Priorizar API JSON dos Correios (mais confiável)
-        logger_rastreio.info(f"Buscando rastreamento para código: {codigo} (priorizando API JSON)")
+        # Usar API JSON dos Correios (endpoint usado pelo site oficial)
+        logger_rastreio.info(f"Buscando rastreamento para código: {codigo} via API dos Correios")
         eventos_api, erro_api = await self.buscar_api_correios(codigo)
         if eventos_api:
-            logger_rastreio.info(f"✅ API JSON retornou {len(eventos_api)} eventos")
+            logger_rastreio.info(f"✅ API retornou {len(eventos_api)} eventos")
             return eventos_api, None
         
-        # Se API JSON falhou, tentar biblioteca como fallback
-        logger_rastreio.info(f"API JSON retornou erro: {erro_api}, tentando biblioteca como fallback")
-        
-        # Tentar detectar biblioteca novamente se não estiver disponível
-        if not RASTREIO_AVAILABLE or not rastreio_func:
-            logger_rastreio.info("Biblioteca não detectada, tentando detectar novamente...")
-            detectar_biblioteca()
-        
-        if not RASTREIO_AVAILABLE or not rastreio_func:
-            # Se não tem biblioteca, retornar erro da API JSON
-            logger_rastreio.warning("Nenhuma biblioteca disponível, retornando erro da API JSON")
-            return None, erro_api if erro_api else "❌ Não foi possível buscar informações de rastreamento."
-        
-        try:
-            # Executar busca com timeout
-            logger_rastreio.info(f"Buscando rastreamento para código: {codigo}")
-            logger_rastreio.info(f"rastreio_client: {rastreio_client}, rastreio_func: {rastreio_func}")
-            
-            # Se temos um cliente instanciado, usar o método dele
-            if rastreio_client:
+        # Se API falhou, retornar erro
+        logger_rastreio.warning(f"API retornou erro: {erro_api}")
+        return None, erro_api if erro_api else "❌ Não foi possível buscar informações de rastreamento."
                 # Tentar diferentes métodos
                 if hasattr(rastreio_client, 'rastrear'):
                     logger_rastreio.info("Usando rastreio_client.rastrear")
