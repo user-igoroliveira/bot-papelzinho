@@ -277,7 +277,7 @@ class Rastreio(commands.Cog):
             return eventos_api, None
         
         # Se API JSON falhou, tentar biblioteca como fallback
-        logger_rastreio.info(f"API JSON falhou ({erro_api}), tentando biblioteca como fallback")
+        logger_rastreio.info(f"API JSON retornou erro: {erro_api}, tentando biblioteca como fallback")
         
         # Tentar detectar biblioteca novamente se não estiver disponível
         if not RASTREIO_AVAILABLE or not rastreio_func:
@@ -285,7 +285,9 @@ class Rastreio(commands.Cog):
             detectar_biblioteca()
         
         if not RASTREIO_AVAILABLE or not rastreio_func:
-            return None, f"❌ {erro_api}\n\n💡 Nenhuma fonte de rastreamento disponível."
+            # Se não tem biblioteca, retornar erro da API JSON
+            logger_rastreio.warning("Nenhuma biblioteca disponível, retornando erro da API JSON")
+            return None, erro_api if erro_api else "❌ Não foi possível buscar informações de rastreamento."
         
         try:
             # Executar busca com timeout
