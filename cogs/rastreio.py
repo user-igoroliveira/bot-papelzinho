@@ -228,16 +228,26 @@ class Rastreio(commands.Cog):
         """Buscar informações de rastreamento"""
         global RASTREIO_AVAILABLE, rastreio_func, rastreio_client
         
+        if not self.validar_codigo(codigo):
+            return None, "❌ Código de rastreamento inválido! Use o formato: YO065460434BR"
+        
+        # Priorizar API JSON dos Correios (mais confiável)
+        logger_rastreio.info(f"Buscando rastreamento para código: {codigo} (priorizando API JSON)")
+        eventos_api, erro_api = await self.buscar_api_correios(codigo)
+        if eventos_api:
+            logger_rastreio.info(f"✅ API JSON retornou {len(eventos_api)} eventos")
+            return eventos_api, None
+        
+        # Se API JSON falhou, tentar biblioteca como fallback
+        logger_rastreio.info(f"API JSON falhou ({erro_api}), tentando biblioteca como fallback")
+        
         # Tentar detectar biblioteca novamente se não estiver disponível
         if not RASTREIO_AVAILABLE or not rastreio_func:
             logger_rastreio.info("Biblioteca não detectada, tentando detectar novamente...")
             detectar_biblioteca()
         
         if not RASTREIO_AVAILABLE or not rastreio_func:
-            return None, "❌ Biblioteca de rastreamento não instalada. Instale: pip install rastreio-correios"
-        
-        if not self.validar_codigo(codigo):
-            return None, "❌ Código de rastreamento inválido! Use o formato: YO065460434BR"
+            return None, f"❌ {erro_api}\n\n💡 Nenhuma fonte de rastreamento disponível."
         
         try:
             # Executar busca com timeout
