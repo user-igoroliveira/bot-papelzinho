@@ -174,30 +174,48 @@ class Rastreio(commands.Cog):
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(url, headers=headers, timeout=10) as response:
+                    logger_rastreio.info(f"API JSON status: {response.status} para código {codigo}")
+                    
                     if response.status == 200:
                         data = await response.json()
-                        logger_rastreio.info(f"API JSON retornou: {json.dumps(data, indent=2)[:500]}")
+                        logger_rastreio.info(f"API JSON retornou dados: {json.dumps(data, indent=2, ensure_ascii=False)[:1000]}")
                         
                         if data and 'objetos' in data and data['objetos']:
                             objeto = data['objetos'][0]
+                            
+                            # Verificar se tem erro no objeto
+                            if 'mensagem' in objeto and objeto['mensagem']:
+                                logger_rastreio.warning(f"API retornou mensagem: {objeto['mensagem']}")
+                                return None, f"❌ {objeto['mensagem']}"
+                            
                             if 'eventos' in objeto and objeto['eventos']:
                                 eventos = []
                                 for ev in objeto['eventos']:
+                                    # Extrair dados do evento
+                                    unidade = ev.get('unidade', {})
+                                    endereco = unidade.get('endereco', {}) if isinstance(unidade, dict) else {}
+                                    
                                     evento_formatado = {
                                         'data': ev.get('dtHrCriado', ev.get('data', '')),
                                         'descricao': ev.get('descricao', ev.get('tipo', '')),
-                                        'local': ev.get('unidade', {}).get('endereco', {}).get('cidade', ''),
-                                        'uf': ev.get('unidade', {}).get('endereco', {}).get('uf', '')
+                                        'local': endereco.get('cidade', '') if isinstance(endereco, dict) else '',
+                                        'uf': endereco.get('uf', '') if isinstance(endereco, dict) else ''
                                     }
                                     eventos.append(evento_formatado)
                                 
                                 if eventos:
                                     logger_rastreio.info(f"API JSON retornou {len(eventos)} eventos")
                                     return eventos, None
-                        
-                        return None, "❌ Nenhuma informação encontrada na API dos Correios."
+                            else:
+                                logger_rastreio.warning("API retornou objeto mas sem eventos")
+                                return None, "❌ Nenhum evento encontrado na API dos Correios."
+                        else:
+                            logger_rastreio.warning("API retornou dados mas sem objetos")
+                            return None, "❌ Nenhuma informação encontrada na API dos Correios."
                     else:
                         logger_rastreio.warning(f"API JSON retornou status {response.status}")
+                        text = await response.text()
+                        logger_rastreio.warning(f"Resposta da API: {text[:200]}")
                         return None, f"❌ Erro ao acessar API dos Correios (Status: {response.status})"
         except asyncio.TimeoutError:
             logger_rastreio.warning("Timeout ao acessar API JSON")
@@ -337,10 +355,14 @@ class Rastreio(commands.Cog):
                 if any(msg in resultado_lower for msg in mensagens_erro):
                     logger_rastreio.warning(f"Biblioteca retornou mensagem de erro: {resultado}")
                     # Tentar API JSON dos Correios como fallback
-                    logger_rastreio.info("Tentando API JSON dos Correios como fallback")
+                    logger_rastreio.info("Biblioteca retornou erro, tentando API JSON dos Correios como fallback")
                     eventos_api, erro_api = await self.buscar_api_correios(codigo)
+                    logger_rastreio.info(f"Fallback API retornou: eventos={eventos_api is not None}, erro={erro_api}")
                     if eventos_api:
+                        logger_rastreio.info(f"Fallback API funcionou! Retornando {len(eventos_api)} eventos")
                         return eventos_api, None
+                    # Se fallback também falhou, retornar erro original da biblioteca
+                    logger_rastreio.warning(f"Fallback API também falhou: {erro_api}")
                     return None, f"❌ {resultado}"
                 
                 # Se for string, pode ser JSON que precisa ser parseado
