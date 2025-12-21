@@ -286,7 +286,6 @@ class Rastreio(commands.Cog):
         return None, erro_api if erro_api else "❌ Não foi possível buscar informações de rastreamento."
     
     @commands.hybrid_command(name='rastrear', aliases=['rastreio', 'track'])
-    @commands.hybrid_command(name='rastrear', aliases=['rastreio', 'track'])
     @app_commands.describe(codigo='Código de rastreamento dos Correios (ex: YO065460434BR)')
     async def rastrear(self, ctx, *, codigo: str = None):
         """Rastrear encomenda dos Correios pelo código"""
