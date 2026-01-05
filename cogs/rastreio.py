@@ -90,15 +90,14 @@ class Rastreio(commands.Cog):
             'Pragma': 'no-cache',
         }
         
-        # Configurar timeout e connector
+        # Configurar timeout
         timeout = aiohttp.ClientTimeout(total=20)
-        connector = aiohttp.TCPConnector(limit=10, limit_per_host=5)
         
         for attempt in range(max_retries):
             try:
-                # Criar sessão com cookies para manter estado
+                # Criar uma nova sessão a cada tentativa para evitar "Session is closed"
+                # Deixar o aiohttp gerenciar o connector automaticamente
                 async with aiohttp.ClientSession(
-                    connector=connector,
                     timeout=timeout,
                     cookie_jar=aiohttp.CookieJar()
                 ) as session:
@@ -162,17 +161,18 @@ class Rastreio(commands.Cog):
                         
                         elif response.status == 403:
                             # Erro 403 - tentar novamente com backoff exponencial
+                            # Consumir resposta antes de continuar
+                            try:
+                                await response.read()
+                            except:
+                                pass
+                            
                             if attempt < max_retries - 1:
                                 wait_time = (2 ** attempt) + random.uniform(0, 1)
                                 logger_rastreio.warning(f"403 recebido, tentando novamente em {wait_time:.2f}s... (tentativa {attempt + 1}/{max_retries})")
                                 await asyncio.sleep(wait_time)
                                 continue
                             else:
-                                try:
-                                    text = await response.text()
-                                    logger_rastreio.warning(f"API retornou status 403 após {max_retries} tentativas: {text[:200]}")
-                                except:
-                                    pass
                                 return None, "❌ Erro 403: Acesso negado pela API dos Correios. A API pode estar bloqueando requisições. Tente novamente mais tarde."
                         
                         else:
@@ -203,6 +203,18 @@ class Rastreio(commands.Cog):
                     return None, "❌ Timeout ao buscar informações. Tente novamente."
             
             except aiohttp.ClientError as e:
+                error_msg = str(e).lower()
+                # Tratar especificamente o erro "Session is closed"
+                if "session is closed" in error_msg or "connector is closed" in error_msg:
+                    if attempt < max_retries - 1:
+                        wait_time = (2 ** attempt) + random.uniform(0, 1)
+                        logger_rastreio.warning(f"Sessão fechada, criando nova sessão em {wait_time:.2f}s... (tentativa {attempt + 1}/{max_retries})")
+                        await asyncio.sleep(wait_time)
+                        continue
+                    else:
+                        logger_rastreio.error(f"Erro de sessão após todas as tentativas: {e}", exc_info=True)
+                        return None, "❌ Erro ao manter conexão com a API. Tente novamente."
+                
                 if attempt < max_retries - 1:
                     wait_time = (2 ** attempt) + random.uniform(0, 1)
                     logger_rastreio.warning(f"Erro de conexão: {e}, tentando novamente em {wait_time:.2f}s...")
@@ -213,6 +225,18 @@ class Rastreio(commands.Cog):
                     return None, "❌ Erro de conexão ao buscar informações."
             
             except Exception as e:
+                error_msg = str(e).lower()
+                # Tratar especificamente o erro "Session is closed" mesmo em exceções genéricas
+                if "session is closed" in error_msg or "connector is closed" in error_msg:
+                    if attempt < max_retries - 1:
+                        wait_time = (2 ** attempt) + random.uniform(0, 1)
+                        logger_rastreio.warning(f"Sessão fechada, criando nova sessão em {wait_time:.2f}s... (tentativa {attempt + 1}/{max_retries})")
+                        await asyncio.sleep(wait_time)
+                        continue
+                    else:
+                        logger_rastreio.error(f"Erro de sessão após todas as tentativas: {e}", exc_info=True)
+                        return None, "❌ Erro ao manter conexão com a API. Tente novamente."
+                
                 logger_rastreio.error(f"Erro inesperado: {e}", exc_info=True)
                 return None, f"❌ Erro ao buscar na API: {str(e)[:100]}"
         
