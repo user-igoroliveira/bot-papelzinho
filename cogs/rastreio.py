@@ -101,13 +101,13 @@ class Rastreio(commands.Cog):
         
         timeout = aiohttp.ClientTimeout(total=20)
         async with aiohttp.ClientSession(timeout=timeout) as session:
+            # A API CWS espera apenas 'numero' no body, a senha vai no Basic Auth
             payload = {
-                "numero": self.numero_contrato,
-                "senha": self.chave_acesso
+                "numero": self.numero_contrato
             }
             
             try:
-                logger_rastreio.debug(f"Payload de autenticação CWS: {{'numero': '{self.numero_contrato}', 'senha': '***'}}")
+                logger_rastreio.debug(f"Payload de autenticação CWS: {{'numero': '{self.numero_contrato}'}}")
                 
                 headers = {
                     "Content-Type": "application/json",
