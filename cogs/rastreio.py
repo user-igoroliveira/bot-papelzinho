@@ -121,15 +121,29 @@ class Rastreio(commands.Cog):
                 ) as response:
                     logger_rastreio.info(f"Resposta da API de token CWS - Status: {response.status}")
                     
-                    if response.status == 200:
+                    # A API CWS retorna 201 (Created) quando o token é gerado com sucesso
+                    if response.status in [200, 201]:
                         try:
                             data = await response.json()
                             logger_rastreio.debug(f"JSON recebido: {json.dumps(data, indent=2)}")
                             token = data.get("token")
                             if token:
-                                # Cache do token por 1 hora (3600 segundos)
+                                # Usar expiraEm da resposta se disponível, senão cache por 1 hora
+                                if "expiraEm" in data:
+                                    try:
+                                        # Converter expiraEm para timestamp
+                                        from datetime import datetime as dt
+                                        expira_str = data["expiraEm"]
+                                        expira_dt = dt.fromisoformat(expira_str.replace('Z', '+00:00'))
+                                        self.token_expires_at = expira_dt.timestamp()
+                                    except:
+                                        # Se falhar, usar 1 hora padrão
+                                        self.token_expires_at = time.time() + 3600
+                                else:
+                                    # Cache do token por 1 hora (3600 segundos) se não tiver expiraEm
+                                    self.token_expires_at = time.time() + 3600
+                                
                                 self.token_cache = token
-                                self.token_expires_at = time.time() + 3600
                                 logger_rastreio.info("Token CWS obtido com sucesso e armazenado em cache")
                                 return token
                             else:
@@ -159,9 +173,11 @@ class Rastreio(commands.Cog):
             return None, None  # Retornar None para tentar método alternativo
         
         # URLs da API CWS de rastreamento - tentar diferentes formatos
+        # Baseado na documentação CWS, o endpoint pode variar
         urls_tentativas = [
-            f"{self.rastreio_url_base}/sro/v1/rastro/{codigo}",
-            f"{self.rastreio_url_base}/v1/sro-rastro/{codigo}",
+            f"{self.rastreio_url_base}/sro/v1/rastro/{codigo}",  # Formato padrão CWS
+            f"{self.rastreio_url_base}/v1/sro-rastro/{codigo}",  # Formato alternativo
+            f"{self.rastreio_url_base}/sro-rastro/v1/{codigo}",  # Outro formato possível
             f"https://proxyapp.correios.com.br/v1/sro-rastro/{codigo}"  # Endpoint público mas com autenticação
         ]
         
