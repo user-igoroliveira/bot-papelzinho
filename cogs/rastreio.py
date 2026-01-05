@@ -132,11 +132,11 @@ class Rastreio(commands.Cog):
                                 if "expiraEm" in data:
                                     try:
                                         # Converter expiraEm para timestamp
-                                        from datetime import datetime as dt
                                         expira_str = data["expiraEm"]
-                                        expira_dt = dt.fromisoformat(expira_str.replace('Z', '+00:00'))
+                                        expira_dt = datetime.fromisoformat(expira_str.replace('Z', '+00:00'))
                                         self.token_expires_at = expira_dt.timestamp()
-                                    except:
+                                    except Exception as e:
+                                        logger_rastreio.warning(f"Erro ao converter expiraEm: {e}, usando cache padrão de 1 hora")
                                         # Se falhar, usar 1 hora padrão
                                         self.token_expires_at = time.time() + 3600
                                 else:
