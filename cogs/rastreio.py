@@ -243,6 +243,60 @@ class Rastreio(commands.Cog):
         # Se chegou aqui, todas as tentativas falharam
         return None, "❌ Não foi possível acessar a API dos Correios após várias tentativas."
     
+    async def buscar_api_correios_pyrastreio(self, codigo: str):
+        """Buscar rastreamento usando biblioteca pyrastreio"""
+        try:
+            from pyrastreio import correios
+            
+            logger_rastreio.info(f"Tentando buscar com pyrastreio para código: {codigo}")
+            
+            # Executar em thread separada pois pode não ser totalmente async
+            loop = asyncio.get_event_loop()
+            resultado = await loop.run_in_executor(
+                None, 
+                lambda: correios(codigo)
+            )
+            
+            if resultado and isinstance(resultado, list) and len(resultado) > 0:
+                eventos = []
+                for ev in resultado:
+                    # pyrastreio retorna dicts com: data, hora, local, mensagem
+                    if isinstance(ev, dict):
+                        # Formatar data e hora
+                        data_str = ev.get('data', '')
+                        hora_str = ev.get('hora', '')
+                        if data_str and hora_str:
+                            data_completa = f"{data_str} {hora_str}"
+                        elif data_str:
+                            data_completa = data_str
+                        else:
+                            data_completa = ''
+                        
+                        evento_formatado = {
+                            'data': data_completa,
+                            'descricao': ev.get('mensagem', ev.get('descricao', 'Informação não disponível')),
+                            'local': ev.get('local', ''),
+                            'uf': ev.get('uf', '')
+                        }
+                        eventos.append(evento_formatado)
+                
+                if eventos:
+                    logger_rastreio.info(f"✅ pyrastreio retornou {len(eventos)} eventos")
+                    return eventos, None
+                else:
+                    logger_rastreio.warning("pyrastreio retornou lista vazia após formatação")
+                    return None, "❌ Nenhum evento encontrado para este código de rastreamento."
+            else:
+                logger_rastreio.warning("pyrastreio retornou resultado vazio")
+                return None, "❌ Nenhum evento encontrado para este código de rastreamento."
+                
+        except ImportError:
+            logger_rastreio.warning("pyrastreio não está instalado ou não pôde ser importado")
+            return None, None  # Retornar None para tentar método alternativo
+        except Exception as e:
+            logger_rastreio.error(f"Erro ao buscar com pyrastreio: {e}", exc_info=True)
+            return None, None  # Retornar None para tentar método alternativo
+    
     def _extrair_dados_evento(self, ev: dict) -> dict:
         """Extrair dados de um evento de forma padronizada"""
         # Extrair data (prioridade: dtHrCriado > data > dataHora)
@@ -283,11 +337,20 @@ class Rastreio(commands.Cog):
         codigo = codigo.upper().strip()
         
         logger_rastreio.info(f"Buscando rastreamento para código: {codigo}")
-        eventos, erro = await self.buscar_api_correios(codigo)
         
+        # Tentar primeiro com pyrastreio (método mais confiável)
+        eventos, erro = await self.buscar_api_correios_pyrastreio(codigo)
         if eventos:
-            logger_rastreio.info(f"✅ Encontrados {len(eventos)} eventos")
+            logger_rastreio.info(f"✅ Encontrados {len(eventos)} eventos via pyrastreio")
             return eventos, None
+        
+        # Se pyrastreio falhar ou não estiver disponível, tentar API direta como fallback
+        if erro is None:  # erro None significa que pyrastreio não está disponível ou falhou silenciosamente
+            logger_rastreio.info("pyrastreio não disponível ou falhou, tentando API direta...")
+            eventos, erro = await self.buscar_api_correios(codigo)
+            if eventos:
+                logger_rastreio.info(f"✅ Encontrados {len(eventos)} eventos via API direta")
+                return eventos, None
         
         return None, erro if erro else "❌ Não foi possível buscar informações de rastreamento."
     
