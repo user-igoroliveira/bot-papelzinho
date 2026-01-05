@@ -50,19 +50,29 @@ class Frete(commands.Cog):
         logger_frete.info(f"Obtendo novo token da API dos Correios - URL: {self.token_url}")
         logger_frete.info(f"Contrato: {self.numero_contrato}")
         
+        # Usar Basic Authentication conforme especificado pela API CWS
+        import base64
+        credentials = f"{self.usuario}:{self.chave_acesso}"
+        encoded_credentials = base64.b64encode(credentials.encode()).decode()
+        
         async with aiohttp.ClientSession() as session:
+            # A API CWS espera apenas 'numero' no body, a senha vai no Basic Auth
             payload = {
-                "numero": self.numero_contrato,
-                "senha": self.chave_acesso
+                "numero": self.numero_contrato
             }
             
             try:
-                logger_frete.debug(f"Payload de autenticação: {{'numero': '{self.numero_contrato}', 'senha': '***'}}")
+                logger_frete.debug(f"Payload de autenticação: {{'numero': '{self.numero_contrato}'}}")
+                
+                headers = {
+                    "Content-Type": "application/json",
+                    "Authorization": f"Basic {encoded_credentials}"
+                }
                 
                 async with session.post(
                     self.token_url,
                     json=payload,
-                    headers={"Content-Type": "application/json"}
+                    headers=headers
                 ) as response:
                     logger_frete.info(f"Resposta da API de token - Status: {response.status}")
                     
