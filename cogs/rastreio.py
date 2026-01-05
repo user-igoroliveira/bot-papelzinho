@@ -94,6 +94,11 @@ class Rastreio(commands.Cog):
         logger_rastreio.info(f"Obtendo novo token CWS - URL: {self.token_url}")
         logger_rastreio.info(f"Contrato: {self.numero_contrato}")
         
+        # Usar Basic Authentication conforme especificado pela API CWS
+        import base64
+        credentials = f"{self.usuario}:{self.chave_acesso}"
+        encoded_credentials = base64.b64encode(credentials.encode()).decode()
+        
         timeout = aiohttp.ClientTimeout(total=20)
         async with aiohttp.ClientSession(timeout=timeout) as session:
             payload = {
@@ -104,10 +109,15 @@ class Rastreio(commands.Cog):
             try:
                 logger_rastreio.debug(f"Payload de autenticação CWS: {{'numero': '{self.numero_contrato}', 'senha': '***'}}")
                 
+                headers = {
+                    "Content-Type": "application/json",
+                    "Authorization": f"Basic {encoded_credentials}"
+                }
+                
                 async with session.post(
                     self.token_url,
                     json=payload,
-                    headers={"Content-Type": "application/json"}
+                    headers=headers
                 ) as response:
                     logger_rastreio.info(f"Resposta da API de token CWS - Status: {response.status}")
                     
