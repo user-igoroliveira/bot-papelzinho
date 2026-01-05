@@ -173,12 +173,12 @@ class Rastreio(commands.Cog):
             return None, None  # Retornar None para tentar método alternativo
         
         # URLs da API CWS de rastreamento - tentar diferentes formatos
-        # Baseado na documentação CWS, o endpoint pode variar
+        # A API CWS pode não ter endpoint específico de rastreamento, usar endpoint público com autenticação
         urls_tentativas = [
-            f"{self.rastreio_url_base}/sro/v1/rastro/{codigo}",  # Formato padrão CWS
+            f"https://proxyapp.correios.com.br/v1/sro-rastro/{codigo}",  # Endpoint público com autenticação Bearer
+            f"{self.rastreio_url_base}/sro/v1/rastro/{codigo}",  # Formato padrão CWS (pode não existir)
             f"{self.rastreio_url_base}/v1/sro-rastro/{codigo}",  # Formato alternativo
             f"{self.rastreio_url_base}/sro-rastro/v1/{codigo}",  # Outro formato possível
-            f"https://proxyapp.correios.com.br/v1/sro-rastro/{codigo}"  # Endpoint público mas com autenticação
         ]
         
         headers = {
@@ -260,6 +260,16 @@ class Rastreio(commands.Cog):
                         
                         elif response.status == 404:
                             logger_rastreio.debug(f"API CWS retornou 404 para URL: {url}, tentando próxima URL...")
+                            break  # Sair do async with e tentar próxima URL
+                        
+                        elif response.status == 503:
+                            # Serviço inexistente - endpoint pode não estar disponível
+                            try:
+                                text = await response.text()
+                                logger_rastreio.warning(f"API CWS retornou 503 (Serviço inexistente) para URL: {url}")
+                                logger_rastreio.debug(f"Resposta: {text[:300]}")
+                            except:
+                                pass
                             break  # Sair do async with e tentar próxima URL
                         
                         else:
