@@ -22,6 +22,18 @@ class Rastreio(commands.Cog):
     
     def __init__(self, bot):
         self.bot = bot
+        # Credenciais da API CWS dos Correios
+        self.usuario = "30351099000137"
+        self.chave_acesso = "gqVdGY2caLooqdqpuDMXh3Mclmw6jYGL5FiErWGN"
+        self.numero_contrato = "9912708847"
+        self.numero_cartao_postagem = "0079422250"
+        # Endpoints da API CWS
+        self.token_url = "https://api.correios.com.br/token/v1/autentica/contrato"
+        # Endpoint de rastreamento CWS (pode variar, tentaremos diferentes formatos)
+        self.rastreio_url_base = "https://api.correios.com.br"
+        # Cache de token (válido por 1 hora)
+        self.token_cache = None
+        self.token_expires_at = None
         logger_rastreio.info("Cog Rastreio inicializado")
     
     async def send_private_response(self, ctx, content=None, embed=None):
@@ -68,6 +80,183 @@ class Rastreio(commands.Cog):
         # Ou 13 caracteres alfanuméricos
         pattern = r'^[A-Z]{2}\d{9}[A-Z]{2}$|^[A-Z0-9]{13}$'
         return bool(re.match(pattern, codigo))
+    
+    async def obter_token_cws(self):
+        """Obter token de autenticação da API CWS dos Correios"""
+        import time
+        
+        # Verificar se o token ainda é válido (cache de 1 hora)
+        if self.token_cache and self.token_expires_at:
+            if time.time() < self.token_expires_at:
+                logger_rastreio.debug("Token CWS em cache ainda válido, reutilizando")
+                return self.token_cache
+        
+        logger_rastreio.info(f"Obtendo novo token CWS - URL: {self.token_url}")
+        logger_rastreio.info(f"Contrato: {self.numero_contrato}")
+        
+        timeout = aiohttp.ClientTimeout(total=20)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            payload = {
+                "numero": self.numero_contrato,
+                "senha": self.chave_acesso
+            }
+            
+            try:
+                logger_rastreio.debug(f"Payload de autenticação CWS: {{'numero': '{self.numero_contrato}', 'senha': '***'}}")
+                
+                async with session.post(
+                    self.token_url,
+                    json=payload,
+                    headers={"Content-Type": "application/json"}
+                ) as response:
+                    logger_rastreio.info(f"Resposta da API de token CWS - Status: {response.status}")
+                    
+                    if response.status == 200:
+                        try:
+                            data = await response.json()
+                            logger_rastreio.debug(f"JSON recebido: {json.dumps(data, indent=2)}")
+                            token = data.get("token")
+                            if token:
+                                # Cache do token por 1 hora (3600 segundos)
+                                self.token_cache = token
+                                self.token_expires_at = time.time() + 3600
+                                logger_rastreio.info("Token CWS obtido com sucesso e armazenado em cache")
+                                return token
+                            else:
+                                logger_rastreio.error(f"Token não encontrado na resposta CWS: {data}")
+                                return None
+                        except json.JSONDecodeError as e:
+                            response_text = await response.text()
+                            logger_rastreio.error(f"Erro ao decodificar JSON da resposta CWS: {e} - Resposta: {response_text[:500]}")
+                            return None
+                    else:
+                        response_text = await response.text()
+                        logger_rastreio.error(f"Erro HTTP ao obter token CWS: {response.status} - {response_text[:500]}")
+                        return None
+            except aiohttp.ClientError as e:
+                logger_rastreio.error(f"Erro de conexão ao obter token CWS: {e}")
+                return None
+            except Exception as e:
+                logger_rastreio.error(f"Exceção ao obter token CWS: {e}", exc_info=True)
+                return None
+    
+    async def buscar_api_correios_cws(self, codigo: str):
+        """Buscar rastreamento usando API CWS autenticada dos Correios"""
+        # Obter token de autenticação
+        token = await self.obter_token_cws()
+        if not token:
+            logger_rastreio.warning("Não foi possível obter token CWS, tentando método alternativo")
+            return None, None  # Retornar None para tentar método alternativo
+        
+        # URLs da API CWS de rastreamento - tentar diferentes formatos
+        urls_tentativas = [
+            f"{self.rastreio_url_base}/sro/v1/rastro/{codigo}",
+            f"{self.rastreio_url_base}/v1/sro-rastro/{codigo}",
+            f"https://proxyapp.correios.com.br/v1/sro-rastro/{codigo}"  # Endpoint público mas com autenticação
+        ]
+        
+        headers = {
+            'Authorization': f'Bearer {token}',
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+        }
+        
+        timeout = aiohttp.ClientTimeout(total=20)
+        
+        # Tentar cada URL até encontrar uma que funcione
+        for url in urls_tentativas:
+            try:
+                async with aiohttp.ClientSession(timeout=timeout) as session:
+                    async with session.get(url, headers=headers) as response:
+                        logger_rastreio.debug(f"API CWS status: {response.status} para código {codigo} (URL: {url})")
+                        
+                        if response.status == 200:
+                            data = await response.json()
+                            
+                            # Verificar estrutura de resposta
+                            if not data:
+                                logger_rastreio.warning(f"API CWS retornou dados vazios para URL: {url}")
+                                break  # Sair do async with e tentar próxima URL
+                            
+                            # Processar resposta da API CWS
+                            # A estrutura pode variar, vamos tentar diferentes formatos
+                            eventos = []
+                            
+                            # Tentar formato com 'objetos'
+                            if 'objetos' in data and data['objetos']:
+                                objeto = data['objetos'][0]
+                                
+                                # Verificar mensagem de erro
+                                if 'mensagem' in objeto:
+                                    mensagem = objeto['mensagem']
+                                    if mensagem and mensagem.strip():
+                                        logger_rastreio.info(f"API CWS retornou mensagem: {mensagem}")
+                                        if any(palavra in mensagem.lower() for palavra in 
+                                              ['não encontrado', 'não localizado', 'inexistente', 'objeto não encontrado']):
+                                            return None, f"❌ {mensagem}"
+                                
+                                # Processar eventos
+                                if 'eventos' in objeto and objeto['eventos']:
+                                    for ev in objeto['eventos']:
+                                        evento_formatado = self._extrair_dados_evento(ev)
+                                        if evento_formatado:
+                                            eventos.append(evento_formatado)
+                            
+                            # Tentar formato direto com eventos
+                            elif 'eventos' in data and data['eventos']:
+                                for ev in data['eventos']:
+                                    evento_formatado = self._extrair_dados_evento(ev)
+                                    if evento_formatado:
+                                        eventos.append(evento_formatado)
+                            
+                            if eventos:
+                                logger_rastreio.info(f"✅ API CWS retornou {len(eventos)} eventos (URL: {url})")
+                                return eventos, None
+                            else:
+                                logger_rastreio.warning(f"API CWS retornou resposta mas sem eventos para URL: {url}")
+                                break  # Sair do async with e tentar próxima URL
+                        
+                        elif response.status == 401:
+                            # Token inválido ou expirado, limpar cache
+                            logger_rastreio.warning(f"Token CWS inválido ou expirado para URL: {url}, limpando cache")
+                            self.token_cache = None
+                            self.token_expires_at = None
+                            # Tentar obter novo token
+                            token = await self.obter_token_cws()
+                            if not token:
+                                return None, None  # Se não conseguir token, tentar método alternativo
+                            headers['Authorization'] = f'Bearer {token}'
+                            break  # Sair e tentar novamente com novo token
+                        
+                        elif response.status == 403:
+                            logger_rastreio.warning(f"API CWS retornou 403 para URL: {url}, tentando próxima URL...")
+                            break  # Sair do async with e tentar próxima URL
+                        
+                        elif response.status == 404:
+                            logger_rastreio.debug(f"API CWS retornou 404 para URL: {url}, tentando próxima URL...")
+                            break  # Sair do async with e tentar próxima URL
+                        
+                        else:
+                            try:
+                                text = await response.text()
+                                logger_rastreio.warning(f"API CWS retornou status {response.status} para URL {url}: {text[:200]}")
+                            except:
+                                pass
+                            break  # Sair do async with e tentar próxima URL
+                            
+            except asyncio.TimeoutError:
+                logger_rastreio.warning(f"Timeout ao acessar API CWS URL: {url}")
+                continue  # Tentar próxima URL
+            except aiohttp.ClientError as e:
+                logger_rastreio.warning(f"Erro de conexão na API CWS URL {url}: {e}")
+                continue  # Tentar próxima URL
+            except Exception as e:
+                logger_rastreio.warning(f"Erro inesperado na API CWS URL {url}: {e}")
+                continue  # Tentar próxima URL
+        
+        # Se chegou aqui, todas as URLs falharam
+        logger_rastreio.warning("Todas as URLs da API CWS falharam, tentando método alternativo")
+        return None, None  # Tentar método alternativo
     
     async def buscar_api_correios(self, codigo: str, max_retries: int = 3):
         """Buscar rastreamento usando API oficial dos Correios com retry automático"""
@@ -338,18 +527,26 @@ class Rastreio(commands.Cog):
         
         logger_rastreio.info(f"Buscando rastreamento para código: {codigo}")
         
-        # Tentar primeiro com pyrastreio (método mais confiável)
-        eventos, erro = await self.buscar_api_correios_pyrastreio(codigo)
+        # Método 1: Tentar primeiro com API CWS autenticada (método oficial e mais confiável)
+        eventos, erro = await self.buscar_api_correios_cws(codigo)
         if eventos:
-            logger_rastreio.info(f"✅ Encontrados {len(eventos)} eventos via pyrastreio")
+            logger_rastreio.info(f"✅ Encontrados {len(eventos)} eventos via API CWS")
             return eventos, None
         
-        # Se pyrastreio falhar ou não estiver disponível, tentar API direta como fallback
+        # Método 2: Se CWS falhar ou não estiver disponível, tentar pyrastreio
+        if erro is None:  # erro None significa que CWS não está disponível ou falhou silenciosamente
+            logger_rastreio.info("API CWS não disponível ou falhou, tentando pyrastreio...")
+            eventos, erro = await self.buscar_api_correios_pyrastreio(codigo)
+            if eventos:
+                logger_rastreio.info(f"✅ Encontrados {len(eventos)} eventos via pyrastreio")
+                return eventos, None
+        
+        # Método 3: Se pyrastreio falhar, tentar API pública direta como último recurso
         if erro is None:  # erro None significa que pyrastreio não está disponível ou falhou silenciosamente
-            logger_rastreio.info("pyrastreio não disponível ou falhou, tentando API direta...")
+            logger_rastreio.info("pyrastreio não disponível ou falhou, tentando API pública direta...")
             eventos, erro = await self.buscar_api_correios(codigo)
             if eventos:
-                logger_rastreio.info(f"✅ Encontrados {len(eventos)} eventos via API direta")
+                logger_rastreio.info(f"✅ Encontrados {len(eventos)} eventos via API pública direta")
                 return eventos, None
         
         return None, erro if erro else "❌ Não foi possível buscar informações de rastreamento."
