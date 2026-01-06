@@ -22,6 +22,9 @@ class Rastreio(commands.Cog):
     
     def __init__(self, bot):
         self.bot = bot
+        # Credenciais da API Linketrack
+        self.linketrack_api_key = "RZurnRHdoH-u_GwnOUSHdpjDOp-ip8cKOx_qhpUc07w"
+        self.linketrack_url = "https://api.linketrack.com/track/json"
         # Credenciais da API CWS dos Correios
         self.usuario = "30351099000137"
         self.chave_acesso = "gqVdGY2caLooqdqpuDMXh3Mclmw6jYGL5FiErWGN"
@@ -468,6 +471,141 @@ class Rastreio(commands.Cog):
         # Se chegou aqui, todas as tentativas falharam
         return None, "❌ Não foi possível acessar a API dos Correios após várias tentativas."
     
+    async def buscar_api_linketrack(self, codigo: str):
+        """Buscar rastreamento usando API do Linketrack"""
+        try:
+            logger_rastreio.info(f"Tentando buscar com Linketrack para código: {codigo}")
+            
+            # URL da API Linketrack - tentar diferentes formatos
+            # Formato 1: GET com código na URL e token no header
+            url_get = f"{self.linketrack_url}?user={self.linketrack_api_key}&codigo={codigo}"
+            # Formato 2: POST com JSON
+            url_post = f"{self.linketrack_url}"
+            
+            headers = {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json',
+                'token': self.linketrack_api_key
+            }
+            
+            payload = {
+                'codigo': codigo,
+                'user': self.linketrack_api_key
+            }
+            
+            timeout = aiohttp.ClientTimeout(total=20)
+            
+            # Tentar primeiro com GET
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(url_get, headers=headers) as response:
+                    logger_rastreio.debug(f"Linketrack GET status: {response.status} para código {codigo}")
+                    
+                    if response.status == 200:
+                        data = await response.json()
+                        eventos = self._processar_resposta_linketrack(data)
+                        if eventos:
+                            logger_rastreio.info(f"✅ Linketrack retornou {len(eventos)} eventos (GET)")
+                            return eventos, None
+                
+                # Se GET não funcionou, tentar POST
+                async with session.post(url_post, json=payload, headers=headers) as response:
+                    logger_rastreio.debug(f"Linketrack POST status: {response.status} para código {codigo}")
+                    
+                    if response.status == 200:
+                        data = await response.json()
+                        eventos = self._processar_resposta_linketrack(data)
+                        if eventos:
+                            logger_rastreio.info(f"✅ Linketrack retornou {len(eventos)} eventos (POST)")
+                            return eventos, None
+                        else:
+                            logger_rastreio.warning("Linketrack retornou resposta mas sem eventos")
+                            return None, "❌ Nenhum evento encontrado para este código de rastreamento."
+                    
+                    elif response.status == 401 or response.status == 403:
+                        logger_rastreio.warning(f"Linketrack retornou {response.status} - Chave de API inválida ou sem permissão")
+                        return None, None  # Tentar método alternativo
+                    
+                    else:
+                        try:
+                            text = await response.text()
+                            logger_rastreio.warning(f"Linketrack retornou status {response.status}: {text[:200]}")
+                        except:
+                            pass
+                        return None, None  # Tentar método alternativo
+                        
+        except asyncio.TimeoutError:
+            logger_rastreio.warning("Timeout ao acessar API Linketrack")
+            return None, None  # Tentar método alternativo
+        except aiohttp.ClientError as e:
+            logger_rastreio.error(f"Erro de conexão na API Linketrack: {e}", exc_info=True)
+            return None, None  # Tentar método alternativo
+        except Exception as e:
+            logger_rastreio.error(f"Erro inesperado na API Linketrack: {e}", exc_info=True)
+            return None, None  # Tentar método alternativo
+    
+    def _processar_resposta_linketrack(self, data) -> list:
+        """Processar resposta da API Linketrack e extrair eventos"""
+        if not data:
+            logger_rastreio.warning("Linketrack retornou dados vazios")
+            return []
+        
+        eventos = []
+        
+        # Linketrack geralmente retorna eventos em formato de lista
+        if isinstance(data, list):
+            for ev in data:
+                evento_formatado = self._extrair_dados_evento_linketrack(ev)
+                if evento_formatado:
+                    eventos.append(evento_formatado)
+        elif isinstance(data, dict):
+            # Tentar diferentes estruturas possíveis
+            if 'eventos' in data:
+                for ev in data['eventos']:
+                    evento_formatado = self._extrair_dados_evento_linketrack(ev)
+                    if evento_formatado:
+                        eventos.append(evento_formatado)
+            elif 'tracking' in data and isinstance(data['tracking'], list):
+                for ev in data['tracking']:
+                    evento_formatado = self._extrair_dados_evento_linketrack(ev)
+                    if evento_formatado:
+                        eventos.append(evento_formatado)
+            elif 'data' in data and isinstance(data['data'], list):
+                for ev in data['data']:
+                    evento_formatado = self._extrair_dados_evento_linketrack(ev)
+                    if evento_formatado:
+                        eventos.append(evento_formatado)
+            elif 'events' in data and isinstance(data['events'], list):
+                for ev in data['events']:
+                    evento_formatado = self._extrair_dados_evento_linketrack(ev)
+                    if evento_formatado:
+                        eventos.append(evento_formatado)
+            else:
+                # Tentar processar como evento único
+                evento_formatado = self._extrair_dados_evento_linketrack(data)
+                if evento_formatado:
+                    eventos.append(evento_formatado)
+        
+        return eventos
+    
+    def _extrair_dados_evento_linketrack(self, ev: dict) -> dict:
+        """Extrair dados de um evento do Linketrack"""
+        # Linketrack pode ter diferentes formatos, tentar extrair de forma flexível
+        data = ev.get('data') or ev.get('date') or ev.get('dtHrCriado') or ev.get('dataHora') or ''
+        descricao = ev.get('descricao') or ev.get('status') or ev.get('mensagem') or ev.get('evento') or 'Informação não disponível'
+        local = ev.get('local') or ev.get('cidade') or ev.get('unidade') or ''
+        uf = ev.get('uf') or ev.get('estado') or ''
+        
+        # Se local está em um objeto aninhado
+        if isinstance(local, dict):
+            local = local.get('nome', '') or local.get('cidade', '')
+        
+        return {
+            'data': data,
+            'descricao': descricao,
+            'local': local if isinstance(local, str) else '',
+            'uf': uf if isinstance(uf, str) else ''
+        }
+    
     async def buscar_api_correios_pyrastreio(self, codigo: str):
         """Buscar rastreamento usando biblioteca pyrastreio"""
         try:
@@ -563,24 +701,29 @@ class Rastreio(commands.Cog):
         
         logger_rastreio.info(f"Buscando rastreamento para código: {codigo}")
         
-        # Nota: A API CWS não possui endpoint de rastreamento disponível para este contrato
-        # Os endpoints retornam 403/503, então vamos usar métodos alternativos
-        
-        # Método 1: Tentar primeiro com pyrastreio (biblioteca especializada)
-        eventos, erro = await self.buscar_api_correios_pyrastreio(codigo)
+        # Método 1: Tentar primeiro com API Linketrack (método principal e mais confiável)
+        eventos, erro = await self.buscar_api_linketrack(codigo)
         if eventos:
-            logger_rastreio.info(f"✅ Encontrados {len(eventos)} eventos via pyrastreio")
+            logger_rastreio.info(f"✅ Encontrados {len(eventos)} eventos via Linketrack")
             return eventos, None
         
-        # Método 2: Se pyrastreio falhar, tentar API pública direta
-        if erro is None:  # erro None significa que pyrastreio não está disponível ou falhou silenciosamente
+        # Método 2: Se Linketrack falhar, tentar pyrastreio
+        if erro is None:  # erro None significa que Linketrack não está disponível ou falhou silenciosamente
+            logger_rastreio.info("Linketrack não disponível ou falhou, tentando pyrastreio...")
+            eventos, erro = await self.buscar_api_correios_pyrastreio(codigo)
+            if eventos:
+                logger_rastreio.info(f"✅ Encontrados {len(eventos)} eventos via pyrastreio")
+                return eventos, None
+        
+        # Método 3: Se pyrastreio falhar, tentar API pública direta
+        if erro is None:
             logger_rastreio.info("pyrastreio não disponível ou falhou, tentando API pública direta...")
             eventos, erro = await self.buscar_api_correios(codigo)
             if eventos:
                 logger_rastreio.info(f"✅ Encontrados {len(eventos)} eventos via API pública direta")
                 return eventos, None
         
-        # Método 3: Como último recurso, tentar API CWS (pode não estar disponível)
+        # Método 4: Como último recurso, tentar API CWS (pode não estar disponível)
         if erro is None:
             logger_rastreio.info("Tentando API CWS como último recurso...")
             eventos, erro = await self.buscar_api_correios_cws(codigo)
