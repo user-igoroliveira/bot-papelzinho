@@ -563,26 +563,29 @@ class Rastreio(commands.Cog):
         
         logger_rastreio.info(f"Buscando rastreamento para código: {codigo}")
         
-        # Método 1: Tentar primeiro com API CWS autenticada (método oficial e mais confiável)
-        eventos, erro = await self.buscar_api_correios_cws(codigo)
+        # Nota: A API CWS não possui endpoint de rastreamento disponível para este contrato
+        # Os endpoints retornam 403/503, então vamos usar métodos alternativos
+        
+        # Método 1: Tentar primeiro com pyrastreio (biblioteca especializada)
+        eventos, erro = await self.buscar_api_correios_pyrastreio(codigo)
         if eventos:
-            logger_rastreio.info(f"✅ Encontrados {len(eventos)} eventos via API CWS")
+            logger_rastreio.info(f"✅ Encontrados {len(eventos)} eventos via pyrastreio")
             return eventos, None
         
-        # Método 2: Se CWS falhar ou não estiver disponível, tentar pyrastreio
-        if erro is None:  # erro None significa que CWS não está disponível ou falhou silenciosamente
-            logger_rastreio.info("API CWS não disponível ou falhou, tentando pyrastreio...")
-            eventos, erro = await self.buscar_api_correios_pyrastreio(codigo)
-            if eventos:
-                logger_rastreio.info(f"✅ Encontrados {len(eventos)} eventos via pyrastreio")
-                return eventos, None
-        
-        # Método 3: Se pyrastreio falhar, tentar API pública direta como último recurso
+        # Método 2: Se pyrastreio falhar, tentar API pública direta
         if erro is None:  # erro None significa que pyrastreio não está disponível ou falhou silenciosamente
             logger_rastreio.info("pyrastreio não disponível ou falhou, tentando API pública direta...")
             eventos, erro = await self.buscar_api_correios(codigo)
             if eventos:
                 logger_rastreio.info(f"✅ Encontrados {len(eventos)} eventos via API pública direta")
+                return eventos, None
+        
+        # Método 3: Como último recurso, tentar API CWS (pode não estar disponível)
+        if erro is None:
+            logger_rastreio.info("Tentando API CWS como último recurso...")
+            eventos, erro = await self.buscar_api_correios_cws(codigo)
+            if eventos:
+                logger_rastreio.info(f"✅ Encontrados {len(eventos)} eventos via API CWS")
                 return eventos, None
         
         return None, erro if erro else "❌ Não foi possível buscar informações de rastreamento."
