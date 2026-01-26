@@ -49,7 +49,8 @@ class Caixas(commands.Cog):
                         'comprimento': medidas[1],
                         'altura': medidas[2],
                         'medida_externa': parts[2].strip() if len(parts) > 2 else '-',
-                        'aproveitamento': parts[3].strip() if len(parts) > 3 else '-'
+                        'aproveitamento': parts[3].strip() if len(parts) > 3 else '-',
+                        'observacoes': parts[4].strip() if len(parts) > 4 else ''
                     })
     
     def parse_medidas(self, medida_str):
@@ -99,7 +100,7 @@ class Caixas(commands.Cog):
         return min_distance if min_distance != float('inf') else None
     
     def find_best_caixas(self, largura, comprimento, altura):
-        """Encontrar as 3 caixas mais próximas das medidas solicitadas"""
+        """Encontrar as 5 caixas mais próximas das medidas solicitadas"""
         medidas_usuario = [largura, comprimento, altura]
         
         resultados = []
@@ -117,8 +118,8 @@ class Caixas(commands.Cog):
         # Ordenar por distância (menor primeiro)
         resultados.sort(key=lambda x: x['distance'])
         
-        # Retornar as 3 melhores
-        return resultados[:3]
+        # Retornar as 5 melhores
+        return resultados[:5]
     
     async def send_private_response(self, ctx, content=None, embed=None):
         """Enviar resposta privada (ephemeral para slash, DM para prefixo)"""
@@ -214,6 +215,10 @@ class Caixas(commands.Cog):
                 f"**Medida Externa:** {caixa['medida_externa']}\n"
                 f"**Aproveitamento:** {caixa['aproveitamento']}"
             )
+            
+            # Adicionar observações se houver
+            if caixa.get('observacoes') and caixa['observacoes'].strip():
+                field_value += f"\n**Observações:** {caixa['observacoes']}"
             
             embed.add_field(
                 name=f"{i}. Código: {caixa['codigo']}",
